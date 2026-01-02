@@ -13,6 +13,7 @@ app.use("/api/contact",require('./routes/ContactRoutes'));
 app.use("/api/lead",require('./routes/LeadsRoutes'));
 
 app.use("/api/invoice",require('./routes/InovoiceRoutes'));
+app.use("/api/proposal",require('./routes/ProposalRoutes'));
 
 app.listen(PORT,()=>
 {
