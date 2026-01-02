@@ -13,7 +13,7 @@ router.get("/",(req,res)=>
 
 router.post("/",(req,res)=>
 {
-    const{
+    let{
         name,
     email,
     phone,
@@ -27,13 +27,13 @@ router.post("/",(req,res)=>
     currency,
     language,
     DOB,
-    Owner,
     jobTitle
     }=req.body;
 
+    if(DOB) DOB=new Date(DOB).toISOString().split("T")[0]
     const sql=`INSERT INTO contact 
-    (name,email,phone,address,city,state,country,zipcode,source,industry,currency,language,DOB,Owner,jobTitle)
-    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`;
+    (name,email,phone,address,city,state,country,zipcode,source,industry,currency,language,DOB,jobTitle)
+    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)`;
     db.query(
     sql,
     [
@@ -50,7 +50,7 @@ router.post("/",(req,res)=>
       currency,
       language,
       DOB,
-      Owner,jobTitle
+      jobTitle
     ],
     (err, result) => {
       if (err) return res.status(500).send(err);
@@ -75,14 +75,13 @@ router.put("/:id",(req,res)=>
     currency,
     language,
     DOB,
-    Owner,
     jobTitle
     }=req.body;
 
     const sql = `
     UPDATE contact SET
     name=?, email=?, phone=?, address=?, city=?, state=?, country=?, zipcode=?,
-    source=?, industry=?, currency=?, language=?, DOB=?, Owner=?,jobTitle=?
+    source=?, industry=?, currency=?, language=?, DOB=?,jobTitle=?
     WHERE id=?
   `;
 
@@ -102,7 +101,6 @@ router.put("/:id",(req,res)=>
       currency,
       language,
       DOB,
-      Owner,
       jobTitle,
       req.params.id
     ],
