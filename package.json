@@ -20,6 +20,7 @@
   "homepage": "https://github.com/Vanshvala23/CRM-Backend#readme",
   "dependencies": {
     "cors": "^2.8.5",
+    "dotenv": "^17.2.3",
     "express": "^5.2.1",
     "mysql2": "^3.16.0",
     "nodemailer": "^7.0.12"
