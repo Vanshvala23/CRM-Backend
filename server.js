@@ -15,6 +15,8 @@ app.use("/api/lead",require('./routes/LeadsRoutes'));
 app.use("/api/invoice",require('./routes/InovoiceRoutes'));
 app.use("/api/proposal",require('./routes/ProposalRoutes'));
 
+app.use("/api/group",require("./routes/groupRoutes"));
+
 app.listen(PORT,()=>
 {
     console.log(`Server is stated at port http://localhost:${PORT}`);

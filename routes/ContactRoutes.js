@@ -1,20 +1,72 @@
-const express = require('express');
-const db=require('../config/db');
-const router=express.Router();
+const express = require("express");
+const db = require("../config/db");
+const router = express.Router();
 
-//get all contacts
-router.get("/",(req,res)=>
-{
-    db.query("Select * from contact",(err,result)=>{
-        if(err)return res.status(500).send(err);
-        res.json(result);
-    })
+/* ======================
+   GET ALL CONTACTS
+====================== */
+router.get("/", (req, res) => {
+  db.query(
+    "SELECT * FROM contact WHERE deleted_at IS NULL",
+    (err, result) => {
+      if (err) return res.status(500).json(err);
+      res.json(result);
+    }
+  );
 });
 
-router.post("/",(req,res)=>
-{
-    let{
-        name,
+/* ======================
+   GET SINGLE CONTACT
+====================== */
+// router.get("/:id", (req, res) => {
+//   db.query(
+//     "SELECT * FROM contact WHERE id=? AND deleted_at IS NULL",
+//     [req.params.id],
+//     (err, result) => {
+//       if (err) return res.status(500).json(err);
+//       if (result.length === 0) {
+//         return res.status(404).json({ message: "Contact not found" });
+//       }
+//       res.json(result[0]);
+//     }
+//   );
+// })
+router.get("/:id", (req, res) => {
+  db.query(
+    `
+    SELECT c.*, g.id AS group_id, g.name AS group_name
+    FROM contact c
+    LEFT JOIN customer_group_map cg ON c.id = cg.customer_id
+    LEFT JOIN customer_groups g ON cg.group_id = g.id
+    WHERE c.id = ?
+    `,
+    [req.params.id],
+    (err, rows) => {
+      if (err) return res.status(500).json(err);
+      if (!rows.length) return res.status(404).json({ message: "Not found" });
+
+      const contact = {
+        ...rows[0],
+        groups: rows
+          .filter(r => r.group_id)
+          .map(r => ({
+            id: r.group_id,
+            name: r.group_name
+          }))
+      };
+
+      res.json(contact);
+    }
+  );
+});
+
+
+/* ======================
+   CREATE CONTACT
+====================== */
+router.post("/", (req, res) => {
+  const {
+    name,
     email,
     phone,
     address,
@@ -22,19 +74,23 @@ router.post("/",(req,res)=>
     state,
     country,
     zipcode,
-    source,
-    industry,
+    website,
     currency,
     language,
-    DOB,
-    jobTitle
-    }=req.body;
+    GST
+  } = req.body;
 
-    if(DOB) DOB=new Date(DOB).toISOString().split("T")[0]
-    const sql=`INSERT INTO contact 
-    (name,email,phone,address,city,state,country,zipcode,source,industry,currency,language,DOB,jobTitle)
-    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)`;
-    db.query(
+  if (!name || !email) {
+    return res.status(400).json({ message: "Name & Email required" });
+  }
+
+  const sql = `
+    INSERT INTO contact
+    (name,email,phone,address,city,state,country,zipcode,website,currency,language,GST)
+    VALUES (?,?,?,?,?,?,?,?,?,?,?,?)
+  `;
+
+  db.query(
     sql,
     [
       name,
@@ -45,24 +101,32 @@ router.post("/",(req,res)=>
       state,
       country,
       zipcode,
-      source,
-      industry,
+      website,
       currency,
       language,
-      DOB,
-      jobTitle
+      GST
     ],
     (err, result) => {
-      if (err) return res.status(500).send(err);
-      res.json({ message: "Contact Added", id: result.insertId });
+      if (err) {
+        if (err.code === "ER_DUP_ENTRY") {
+          return res.status(409).json({ message: "Email already exists" });
+        }
+        return res.status(500).json(err);
+      }
+      res.status(201).json({
+        message: "Contact Added",
+        id: result.insertId
+      });
     }
-    );
+  );
 });
 
-router.put("/:id",(req,res)=>
-{
-   const{
-        name,
+/* ======================
+   UPDATE CONTACT
+====================== */
+router.put("/:id", (req, res) => {
+  const {
+    name,
     email,
     phone,
     address,
@@ -70,22 +134,20 @@ router.put("/:id",(req,res)=>
     state,
     country,
     zipcode,
-    source,
-    industry,
+    website,
     currency,
     language,
-    DOB,
-    jobTitle
-    }=req.body;
+    GST
+  } = req.body;
 
-    const sql = `
+  const sql = `
     UPDATE contact SET
-    name=?, email=?, phone=?, address=?, city=?, state=?, country=?, zipcode=?,
-    source=?, industry=?, currency=?, language=?, DOB=?,jobTitle=?
+    name=?, email=?, phone=?, address=?, city=?, state=?, country=?,
+    zipcode=?, website=?, currency=?, language=?, GST=?
     WHERE id=?
   `;
 
-    db.query(
+  db.query(
     sql,
     [
       name,
@@ -96,25 +158,31 @@ router.put("/:id",(req,res)=>
       state,
       country,
       zipcode,
-      source,
-      industry,
+      website,
       currency,
       language,
-      DOB,
-      jobTitle,
+      GST,
       req.params.id
     ],
-    (err) => {
-      if (err) return res.status(500).send(err);
+    err => {
+      if (err) return res.status(500).json(err);
       res.json({ message: "Contact Updated" });
     }
   );
 });
+
+/* ======================
+   SOFT DELETE CONTACT
+====================== */
 router.delete("/:id", (req, res) => {
-  db.query("DELETE FROM contact WHERE id=?", [req.params.id], (err) => {
-    if (err) return res.status(500).send(err);
-    res.json({ message: "Contact Deleted" });
-  });
+  db.query(
+    "UPDATE contact SET deleted_at=NOW() WHERE id=?",
+    [req.params.id],
+    err => {
+      if (err) return res.status(500).json(err);
+      res.json({ message: "Contact Deleted" });
+    }
+  );
 });
 
 module.exports = router;
