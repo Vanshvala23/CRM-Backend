@@ -5,140 +5,244 @@ const db = require("../config/db");
 // ENUM Allowed Values
 const ALLOWED_TYPES = ["Person", "Organization"];
 const ALLOWED_STATUS = ["New", "Contacted", "Qualified", "Lost"];
-const ALLOWED_VISIBILITY = ["Public", "Private"];
 
-// ============================
-// Get All Leads
-// ============================
+/* ============================
+   GET ALL LEADS
+============================ */
 router.get("/", (req, res) => {
-  db.query("SELECT * FROM leads", (err, result) => {
-    if (err) return res.status(500).json({ error: err });
-    res.json(result);
-  });
+  db.query(
+    "SELECT * FROM leads ORDER BY created_at DESC",
+    (err, result) => {
+      if (err) return res.status(500).json(err);
+      res.json(result);
+    }
+  );
 });
 
-// ============================
-// Get Lead By ID
-// ============================
+/* ============================
+   GET SINGLE LEAD
+============================ */
 router.get("/:id", (req, res) => {
-  db.query("SELECT * FROM leads WHERE id = ?", [req.params.id], (err, result) => {
-    if (err) return res.status(500).json({ error: err });
-    if (result.length === 0) return res.status(404).json({ message: "Lead Not Found" });
-    res.json(result[0]);
-  });
+  db.query(
+    "SELECT * FROM leads WHERE id=?",
+    [req.params.id],
+    (err, result) => {
+      if (err) return res.status(500).json(err);
+      if (!result.length)
+        return res.status(404).json({ message: "Lead not found" });
+      res.json(result[0]);
+    }
+  );
 });
 
-// ============================
-// Create Lead
-// ============================
+/* ============================
+   CREATE LEAD
+============================ */
 router.post("/", (req, res) => {
   const {
-    name,
+    first_name,
+    last_name,
     type,
     company,
-    tag,
-    value,
-    currency,
+    email,
     phone,
+    website,
+    position,
+    address,
+    city,
+    state,
+    country,
+    zipcode,
+    status,
     source,
     industry,
-    owner,
-    description,
+    assigned_to,
+    tags,
+    lead_value,
+    currency,
     visibility,
-    collaborators,
-    status
+    contacted_today,
+    description
   } = req.body;
 
-  // Required Fields Validation
-  if (!name || !value || !currency || !phone)
-    return res.status(400).json({ message: "Required fields missing (name, value, currency, phone)" });
+  if (!first_name || !last_name)
+    return res.status(400).json({ message: "First & Last name required" });
 
-  // ENUM Validations
-  if (type && !ALLOWED_TYPES.includes(type))
-    return res.status(400).json({ message: "Invalid Lead Type" });
-
-  if (status && !ALLOWED_STATUS.includes(status))
-    return res.status(400).json({ message: "Invalid Lead Status" });
-
-  if (visibility && !ALLOWED_VISIBILITY.includes(visibility))
-    return res.status(400).json({ message: "Invalid Visibility Type" });
-
-  const sql = `
-    INSERT INTO leads
-    (name,type,company,tag,value,currency,phone,source,industry,owner,description,visibility,collaborators,status)
-    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)
-  `;
-
-  db.query(
-    sql,
-    [name, type, company, tag, value, currency, phone, source, industry, owner, description, visibility, collaborators, status],
-    (err, result) => {
-      if (err) return res.status(500).json({ error: err });
-      res.json({ message: "Lead Created Successfully", id: result.insertId });
-    }
-  );
-});
-
-// ============================
-// Update Lead
-// ============================
-router.put("/:id", (req, res) => {
-  const {
-    name,
-    type,
+  const leadData = {
+    first_name,
+    last_name,
+    type: type || "Person",
     company,
-    tag,
-    value,
-    currency,
+    email,
     phone,
+    website,
+    position,
+    address,
+    city,
+    state,
+    country,
+    zipcode,
+    status: status || "New",
     source,
     industry,
-    owner,
-    description,
-    visibility,
-    collaborators,
-    status
-  } = req.body;
+    assigned_to,
+    tags,
+    lead_value,
+    currency,
+    visibility: visibility ?? 1,
+    contacted_today: contacted_today ?? 0,
+    description
+  };
 
-  if (type && !ALLOWED_TYPES.includes(type))
-    return res.status(400).json({ message: "Invalid Lead Type" });
+  const sql = "INSERT INTO leads SET ?";
 
-  if (status && !ALLOWED_STATUS.includes(status))
-    return res.status(400).json({ message: "Invalid Lead Status" });
-
-  if (visibility && !ALLOWED_VISIBILITY.includes(visibility))
-    return res.status(400).json({ message: "Invalid Visibility Type" });
-
-  const sql = `
-    UPDATE leads SET
-    name=?, type=?, company=?, tag=?, value=?, currency=?, phone=?, source=?, industry=?, owner=?, description=?, visibility=?, collaborators=?, status=?
-    WHERE id=?
-  `;
-
-  db.query(
-    sql,
-    [name, type, company, tag, value, currency, phone, source, industry, owner, description, visibility, collaborators, status, req.params.id],
-    (err, result) => {
-      if (err) return res.status(500).json({ error: err });
-      if (result.affectedRows === 0)
-        return res.status(404).json({ message: "Lead Not Found" });
-
-      res.json({ message: "Lead Updated Successfully" });
-    }
-  );
-});
-
-// ============================
-// Delete Lead
-// ============================
-router.delete("/:id", (req, res) => {
-  db.query("DELETE FROM leads WHERE id = ?", [req.params.id], (err, result) => {
-    if (err) return res.status(500).json({ error: err });
-    if (result.affectedRows === 0)
-      return res.status(404).json({ message: "Lead Not Found" });
-
-    res.json({ message: "Lead Deleted Successfully" });
+  db.query(sql, leadData, (err, result) => {
+    if (err) return res.status(500).json(err);
+    res.status(201).json({ message: "Lead created", id: result.insertId });
   });
 });
+
+
+
+/* ============================
+   UPDATE LEAD
+============================ */
+router.put("/:id", (req, res) => {
+  const allowedFields = [
+    "first_name","last_name","type","company","email","phone","website","position",
+    "address","city","state","country","zipcode",
+    "status","source","industry","assigned_to","tags",
+    "lead_value","currency","visibility","contacted_today","description"
+  ];
+
+  // Filter out only fields present in req.body
+  const fieldsToUpdate = {};
+  for (const field of allowedFields) {
+    if (req.body[field] !== undefined) {
+      fieldsToUpdate[field] = req.body[field];
+    }
+  }
+
+  if (fieldsToUpdate.type && !ALLOWED_TYPES.includes(fieldsToUpdate.type))
+    return res.status(400).json({ message: "Invalid lead type" });
+
+  if (fieldsToUpdate.status && !ALLOWED_STATUS.includes(fieldsToUpdate.status))
+    return res.status(400).json({ message: "Invalid lead status" });
+
+  if (Object.keys(fieldsToUpdate).length === 0)
+    return res.status(400).json({ message: "No fields to update" });
+
+  // Build dynamic SQL
+  const setClause = Object.keys(fieldsToUpdate)
+    .map(field => `${field} = ?`)
+    .join(", ");
+
+  const sql = `UPDATE leads SET ${setClause} WHERE id = ?`;
+
+  db.query(
+    sql,
+    [...Object.values(fieldsToUpdate), req.params.id],
+    (err, result) => {
+      if (err) return res.status(500).json(err);
+      if (!result.affectedRows)
+        return res.status(404).json({ message: "Lead not found" });
+
+      res.json({ message: "Lead updated successfully" });
+    }
+  );
+});
+
+
+/* ============================
+   DELETE LEAD
+============================ */
+router.delete("/:id", (req, res) => {
+  db.query(
+    "DELETE FROM leads WHERE id=?",
+    [req.params.id],
+    (err, result) => {
+      if (err) return res.status(500).json(err);
+      if (!result.affectedRows)
+        return res.status(404).json({ message: "Lead not found" });
+
+      res.json({ message: "Lead deleted successfully" });
+    }
+  );
+});
+
+router.post("/:id/convert", (req, res) => {
+  const leadId = req.params.id;
+
+  db.query(
+    "SELECT * FROM leads WHERE id=?",
+    [leadId],
+    (err, leads) => {
+      if (err) return res.status(500).json(err);
+      if (!leads.length)
+        return res.status(404).json({ message: "Lead not found" });
+
+      const l = leads[0];
+
+      const sql = `
+        INSERT INTO contact
+        (
+          lead_id, first_name, last_name, email, phone,
+          company, website, position, address,
+          city, state, country, zipcode
+        )
+        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)
+      `;
+
+      db.query(
+        sql,
+        [
+          leadId,
+          l.first_name,
+          l.last_name,
+          l.email,
+          l.phone,
+          l.company,
+          l.website,
+          l.position,
+          l.address,
+          l.city,
+          l.state,
+          l.country,
+          l.zipcode
+        ],
+        (err, result) => {
+          if (err) return res.status(500).json(err);
+
+          db.query(
+            "UPDATE leads SET converted_to_customer=1 WHERE id=?",
+            [leadId]
+          );
+
+          res.json({
+            message: "Lead converted to customer",
+            customer_id: result.insertId
+          });
+        }
+      );
+    }
+  );
+});
+
+router.get("/customers/:id", (req, res) => {
+  db.query(
+    `
+    SELECT c.*, l.source, l.status
+    FROM customers c
+    LEFT JOIN leads l ON c.lead_id = l.id
+    WHERE c.id=?
+    `,
+    [req.params.id],
+    (err, result) => {
+      if (err) return res.status(500).json(err);
+      res.json(result[0]);
+    }
+  );
+});
+
 
 module.exports = router;
