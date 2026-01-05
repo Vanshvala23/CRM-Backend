@@ -1,38 +1,96 @@
 const express = require("express");
 const router = express.Router();
 const db = require("../config/db");
+const multer = require("multer");
+const fs = require("fs");
+const csv = require("csv-parser");
 
 // ENUM Allowed Values
 const ALLOWED_TYPES = ["Person", "Organization"];
 const ALLOWED_STATUS = ["New", "Contacted", "Qualified", "Lost"];
 
+// Configure multer for file uploads
+const upload = multer({ dest: "uploads/" });
+
+/* ============================
+   IMPORT LEADS FROM CSV
+============================ */
+router.post("/import", upload.single("file"), (req, res) => {
+  if (!req.file) return res.status(400).json({ message: "CSV file required" });
+
+  const results = [];
+
+  // Parse CSV file
+  fs.createReadStream(req.file.path)
+    .pipe(csv())
+    .on("data", (row) => {
+      // Map CSV columns to DB columns
+      results.push([
+        row.first_name,
+        row.last_name,
+        row.type || "Person",
+        row.company,
+        row.email,
+        row.phone,
+        row.website,
+        row.position,
+        row.address,
+        row.city,
+        row.state,
+        row.country,
+        row.zipcode,
+        row.status || "New",
+        row.source,
+        row.industry,
+        row.assigned_to,
+        row.tags,
+        row.lead_value,
+        row.currency,
+        row.visibility ?? 1,
+        row.contacted_today ?? 0,
+        row.description,
+      ]);
+    })
+    .on("end", () => {
+      // Bulk insert into database
+      const sql = `
+        INSERT INTO leads
+        (first_name,last_name,type,company,email,phone,website,position,
+        address,city,state,country,zipcode,status,source,industry,assigned_to,tags,
+        lead_value,currency,visibility,contacted_today,description)
+        VALUES ?
+      `;
+
+      db.query(sql, [results], (err, result) => {
+        // Remove uploaded file after processing
+        fs.unlinkSync(req.file.path);
+
+        if (err) return res.status(500).json(err);
+
+        res.json({ message: `Imported ${result.affectedRows} leads successfully` });
+      });
+    });
+});
+
 /* ============================
    GET ALL LEADS
 ============================ */
 router.get("/", (req, res) => {
-  db.query(
-    "SELECT * FROM leads ORDER BY created_at DESC",
-    (err, result) => {
-      if (err) return res.status(500).json(err);
-      res.json(result);
-    }
-  );
+  db.query("SELECT * FROM leads ORDER BY created_at DESC", (err, result) => {
+    if (err) return res.status(500).json(err);
+    res.json(result);
+  });
 });
 
 /* ============================
    GET SINGLE LEAD
 ============================ */
 router.get("/:id", (req, res) => {
-  db.query(
-    "SELECT * FROM leads WHERE id=?",
-    [req.params.id],
-    (err, result) => {
-      if (err) return res.status(500).json(err);
-      if (!result.length)
-        return res.status(404).json({ message: "Lead not found" });
-      res.json(result[0]);
-    }
-  );
+  db.query("SELECT * FROM leads WHERE id=?", [req.params.id], (err, result) => {
+    if (err) return res.status(500).json(err);
+    if (!result.length) return res.status(404).json({ message: "Lead not found" });
+    res.json(result[0]);
+  });
 });
 
 /* ============================
@@ -102,8 +160,6 @@ router.post("/", (req, res) => {
   });
 });
 
-
-
 /* ============================
    UPDATE LEAD
 ============================ */
@@ -115,7 +171,6 @@ router.put("/:id", (req, res) => {
     "lead_value","currency","visibility","contacted_today","description"
   ];
 
-  // Filter out only fields present in req.body
   const fieldsToUpdate = {};
   for (const field of allowedFields) {
     if (req.body[field] !== undefined) {
@@ -129,103 +184,76 @@ router.put("/:id", (req, res) => {
   if (fieldsToUpdate.status && !ALLOWED_STATUS.includes(fieldsToUpdate.status))
     return res.status(400).json({ message: "Invalid lead status" });
 
-  if (Object.keys(fieldsToUpdate).length === 0)
+  if (!Object.keys(fieldsToUpdate).length)
     return res.status(400).json({ message: "No fields to update" });
 
-  // Build dynamic SQL
-  const setClause = Object.keys(fieldsToUpdate)
-    .map(field => `${field} = ?`)
-    .join(", ");
+  const setClause = Object.keys(fieldsToUpdate).map(f => `${f}=?`).join(", ");
+  const sql = `UPDATE leads SET ${setClause} WHERE id=?`;
 
-  const sql = `UPDATE leads SET ${setClause} WHERE id = ?`;
-
-  db.query(
-    sql,
-    [...Object.values(fieldsToUpdate), req.params.id],
-    (err, result) => {
-      if (err) return res.status(500).json(err);
-      if (!result.affectedRows)
-        return res.status(404).json({ message: "Lead not found" });
-
-      res.json({ message: "Lead updated successfully" });
-    }
-  );
+  db.query(sql, [...Object.values(fieldsToUpdate), req.params.id], (err, result) => {
+    if (err) return res.status(500).json(err);
+    if (!result.affectedRows) return res.status(404).json({ message: "Lead not found" });
+    res.json({ message: "Lead updated successfully" });
+  });
 });
-
 
 /* ============================
    DELETE LEAD
 ============================ */
 router.delete("/:id", (req, res) => {
-  db.query(
-    "DELETE FROM leads WHERE id=?",
-    [req.params.id],
-    (err, result) => {
-      if (err) return res.status(500).json(err);
-      if (!result.affectedRows)
-        return res.status(404).json({ message: "Lead not found" });
-
-      res.json({ message: "Lead deleted successfully" });
-    }
-  );
+  db.query("DELETE FROM leads WHERE id=?", [req.params.id], (err, result) => {
+    if (err) return res.status(500).json(err);
+    if (!result.affectedRows) return res.status(404).json({ message: "Lead not found" });
+    res.json({ message: "Lead deleted successfully" });
+  });
 });
 
+/* ============================
+   CONVERT LEAD TO CONTACT
+============================ */
 router.post("/:id/convert", (req, res) => {
   const leadId = req.params.id;
 
-  db.query(
-    "SELECT * FROM leads WHERE id=?",
-    [leadId],
-    (err, leads) => {
-      if (err) return res.status(500).json(err);
-      if (!leads.length)
-        return res.status(404).json({ message: "Lead not found" });
+  db.query("SELECT * FROM leads WHERE id=?", [leadId], (err, leads) => {
+    if (err) return res.status(500).json(err);
+    if (!leads.length) return res.status(404).json({ message: "Lead not found" });
 
-      const l = leads[0];
+    const l = leads[0];
 
-      const sql = `
-        INSERT INTO contact
-        (
-          lead_id, first_name, last_name, email, phone,
-          company, website, position, address,
-          city, state, country, zipcode
-        )
-        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)
-      `;
+    const sql = `
+      INSERT INTO contact
+      (lead_id, first_name, last_name, email, phone,
+      company, website, position, address,
+      city, state, country, zipcode)
+      VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)
+    `;
 
-      db.query(
-        sql,
-        [
-          leadId,
-          l.first_name,
-          l.last_name,
-          l.email,
-          l.phone,
-          l.company,
-          l.website,
-          l.position,
-          l.address,
-          l.city,
-          l.state,
-          l.country,
-          l.zipcode
-        ],
-        (err, result) => {
-          if (err) return res.status(500).json(err);
+    db.query(
+      sql,
+      [
+        leadId,
+        l.first_name,
+        l.last_name,
+        l.email,
+        l.phone,
+        l.company,
+        l.website,
+        l.position,
+        l.address,
+        l.city,
+        l.state,
+        l.country,
+        l.zipcode
+      ],
+      (err, result) => {
+        if (err) return res.status(500).json(err);
 
-          db.query(
-            "UPDATE leads SET converted_to_customer=1 WHERE id=?",
-            [leadId]
-          );
+        db.query("UPDATE leads SET converted_to_customer=1 WHERE id=?", [leadId]);
 
-          res.json({
-            message: "Lead converted to customer",
-            customer_id: result.insertId
-          });
-        }
-      );
-    }
-  );
+        res.json({ message: "Lead converted to customer", customer_id: result.insertId });
+      }
+    );
+  });
 });
 
 router.get("/customers/:id", (req, res) => {
@@ -243,6 +271,5 @@ router.get("/customers/:id", (req, res) => {
     }
   );
 });
-
 
 module.exports = router;
