@@ -107,7 +107,7 @@ router.post("/", async (req, res) => {
     await bulkInsert("task_assignees", taskId, assignees);
     await bulkInsert("task_followers", taskId, followers);
 
-    /* 🔥 FETCH FULL TASK WITH NAMES */
+    /* FETCH FULL TASK WITH NAMES */
     const [[task]] = await db.promise().query(`
       SELECT 
         t.*,
