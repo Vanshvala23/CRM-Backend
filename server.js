@@ -20,6 +20,8 @@ app.use("/api/lead", require('./routes/LeadsRoutes'));
 app.use("/api/invoice", require('./routes/InovoiceRoutes'));
 app.use("/api/proposal", require('./routes/ProposalRoutes'));
 app.use("/api/group", require("./routes/groupRoutes"));
+app.use("/api/tasks", require("./routes/tasksRoutes"));
+app.use("/api/users",require("./routes/userRoutes"));
 
 // Error handling middleware
 app.use((err, req, res, next) => {
