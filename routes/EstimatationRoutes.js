@@ -215,7 +215,7 @@ router.post('/:id/convert', async (req, res) => {
     const [[estimate]] = await conn.query(
       `SELECT e.*, c.name AS customer_name
        FROM estimates e
-       JOIN contacts c ON c.id=e.customer_id
+       JOIN contact c ON c.id=e.customer_id
        WHERE e.id=? AND e.status='Accepted'`,
       [req.params.id]
     );
@@ -279,7 +279,7 @@ router.get('/:id/pdf', async (req, res) => {
   const [[estimate]] = await db.query(
     `SELECT e.*, c.name customer_name
      FROM estimates e
-     JOIN contacts c ON c.id=e.customer_id
+     JOIN contact c ON c.id=e.customer_id
      WHERE e.id=?`,
     [req.params.id]
   );
@@ -317,7 +317,7 @@ router.get('/', async (_, res) => {
     `SELECT e.id, e.estimate_number, c.name customer_name,
             e.issue_date, e.final_total, e.status
      FROM estimates e
-     JOIN contacts c ON c.id=e.customer_id
+     JOIN contact c ON c.id=e.customer_id
      ORDER BY e.id DESC`
   );
   res.json(rows);
