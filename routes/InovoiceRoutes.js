@@ -1,7 +1,7 @@
 const express = require("express");
 const router = express.Router();
 const db = require("../config/db"); // mysql2/promise connection
-
+const PDFDocument = require('pdfkit');
 // --------------------------
 // Helpers
 // --------------------------
@@ -174,7 +174,7 @@ router.put("/:inv_no", async (req, res) => {
 router.delete("/:inv_no", async (req, res) => {
   try {
     const { inv_no } = req.params;
-    const [result] = await db.contact.query("DELETE FROM invoice WHERE inv_no=?", [inv_no]);
+    const [result] = await db.query("DELETE FROM invoice WHERE inv_no=?", [inv_no]);
 
     if (!result.affectedRows) return res.status(404).json({ message: "Invoice not found" });
     res.json({ message: "Invoice Deleted Successfully" });
@@ -182,5 +182,138 @@ router.delete("/:inv_no", async (req, res) => {
     res.status(500).json({ error: err.message });
   }
 });
+
+// --------------------------
+// Invoice PDF (Professional UI)
+// --------------------------
+router.get("/:inv_no/pdf", async (req, res) => {
+  try {
+    const { inv_no } = req.params;
+
+    const [[invoice]] = await db.query(
+      "SELECT * FROM invoice WHERE inv_no=?",
+      [inv_no]
+    );
+    if (!invoice) return res.status(404).json({ message: "Invoice not found" });
+
+    const [items] = await db.query(
+      "SELECT * FROM invoice_items WHERE invoice_id=?",
+      [invoice.id]
+    );
+
+    const doc = new PDFDocument({ size: "A4", margin: 40 });
+    res.setHeader("Content-Type", "application/pdf");
+    doc.pipe(res);
+
+    const currency = invoice.currency || "₹";
+
+    /* ================= HEADER ================= */
+    doc
+      .fontSize(22)
+      .fillColor("#1f2937")
+      .text("INVOICE", { align: "center" });
+
+    doc.moveDown(1.5);
+
+    doc.fontSize(10).fillColor("#374151");
+    doc.text(`Invoice #: ${invoice.inv_no}`, 40, 100);
+    doc.text(`Status: ${invoice.status}`, 420, 100);
+    doc.text(`Issue Date: ${invoice.issue_date}`, 40, 115);
+    doc.text(`Due Date: ${invoice.due_date}`, 420, 115);
+
+    doc.moveDown(2);
+
+    /* ================= BILL TO ================= */
+    doc.fontSize(11).fillColor("#111827");
+    doc.text("Bill To:", 40);
+    doc.font("Helvetica-Bold").text(invoice.bill_to);
+    doc.font("Helvetica");
+
+    doc.moveDown();
+
+    doc.text("Ship To:", 320, 165);
+    doc.font("Helvetica-Bold").text(invoice.ship_to || "-", 320);
+    doc.font("Helvetica");
+
+    doc.moveDown(2);
+
+    /* ================= ITEMS TABLE ================= */
+    const tableTop = doc.y;
+    const col = { name: 40, qty: 260, rate: 330, amount: 440 };
+
+    doc
+      .rect(40, tableTop, 520, 20)
+      .fill("#1f2937");
+
+    doc
+      .fillColor("#ffffff")
+      .fontSize(11)
+      .text("Item", col.name, tableTop + 5)
+      .text("Qty", col.qty, tableTop + 5)
+      .text("Rate", col.rate, tableTop + 5)
+      .text("Amount", col.amount, tableTop + 5);
+
+    let y = tableTop + 25;
+    doc.fillColor("#000");
+
+    items.forEach(i => {
+      doc
+        .fontSize(10)
+        .text(i.name, col.name, y)
+        .text(i.quantity, col.qty, y)
+        .text(`${currency}${i.price}`, col.rate, y)
+        .text(`${currency}${i.total}`, col.amount, y);
+      y += 20;
+    });
+
+    doc.moveDown(3);
+
+    /* ================= TOTALS ================= */
+    const totalsY = y + 10;
+
+    doc.text("Sub Total:", 360, totalsY);
+    doc.text(`${currency}${invoice.sub_total}`, 460, totalsY, { align: "right" });
+
+    doc.text("Discount:", 360, totalsY + 15);
+    doc.text(`${currency}${invoice.discount}`, 460, totalsY + 15, { align: "right" });
+
+    doc.text("Tax:", 360, totalsY + 30);
+    doc.text(`${currency}${invoice.tax}`, 460, totalsY + 30, { align: "right" });
+
+    doc
+      .font("Helvetica-Bold")
+      .text("Total:", 360, totalsY + 50)
+      .text(`${currency}${invoice.total}`, 460, totalsY + 50, { align: "right" })
+      .font("Helvetica");
+
+    doc.moveDown(4);
+
+    /* ================= NOTES ================= */
+    if (invoice.note) {
+      doc.fontSize(11).text("Note:", { underline: true });
+      doc.fontSize(10).text(invoice.note);
+      doc.moveDown();
+    }
+
+    if (invoice.terms_conditions) {
+      doc.fontSize(11).text("Terms & Conditions:", { underline: true });
+      doc.fontSize(10).text(invoice.terms_conditions);
+    }
+
+    /* ================= FOOTER ================= */
+    doc
+      .fontSize(9)
+      .fillColor("#6b7280")
+      .text("Thank you for your business!", 40, 800, {
+        align: "center"
+      });
+
+    doc.end();
+
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 
 module.exports = router;

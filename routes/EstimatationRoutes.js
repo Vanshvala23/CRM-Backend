@@ -168,44 +168,137 @@ router.get('/', async (req, res) => {
 });
 
 // ==============================
-// GENERATE PDF
+// GENERATE ESTIMATE PDF (Professional UI)
 // ==============================
 router.get('/:id/pdf', async (req, res) => {
     try {
         const [[estimate]] = await db.query(
-            `SELECT e.*, CONCAT(c.first_name,' ',c.last_name) AS customer_name FROM estimates e
-             JOIN contact c ON c.id = e.customer_id WHERE e.id=?`,
+            `SELECT e.*, CONCAT(c.first_name,' ',c.last_name) AS customer_name
+             FROM estimates e
+             JOIN contact c ON c.id = e.customer_id
+             WHERE e.id=?`,
             [req.params.id]
         );
 
-        const [items] = await db.query(`SELECT * FROM estimate_items WHERE estimate_id=?`, [req.params.id]);
+        if (!estimate) {
+            return res.status(404).json({ message: 'Estimate not found' });
+        }
 
-        const doc = new PDFDocument();
+        const [items] = await db.query(
+            `SELECT * FROM estimate_items WHERE estimate_id=?`,
+            [req.params.id]
+        );
+
+        const doc = new PDFDocument({ size: 'A4', margin: 40 });
         res.setHeader('Content-Type', 'application/pdf');
         doc.pipe(res);
 
         const currency = estimate.currency || '₹';
 
-        doc.fontSize(20).text('ESTIMATE', { align: 'center' });
+        /* ================= HEADER ================= */
+        doc
+            .fontSize(22)
+            .fillColor('#1f2937')
+            .text('ESTIMATE', { align: 'center' });
+
+        doc.moveDown(1.5);
+
+        doc.fontSize(10).fillColor('#374151');
+        doc.text(`Estimate #: ${estimate.estimate_number}`, 40, 100);
+        doc.text(`Status: ${estimate.status}`, 420, 100);
+        doc.text(`Issue Date: ${estimate.issue_date}`, 40, 115);
+        doc.text(`Expiry Date: ${estimate.expiry_date}`, 420, 115);
+
+        doc.moveDown(2);
+
+        /* ================= CUSTOMER ================= */
+        doc.fontSize(11).fillColor('#111827');
+        doc.text('Customer:', 40);
+        doc.font('Helvetica-Bold').text(estimate.customer_name);
+        doc.font('Helvetica');
+
         doc.moveDown();
-        doc.text(`Estimate No: ${estimate.estimate_number}`);
-        doc.text(`Customer: ${estimate.customer_name}`);
+
+        doc.text('Bill To:', 40);
+        doc.font('Helvetica-Bold').text(estimate.bill_to || '-');
+        doc.font('Helvetica');
+
         doc.moveDown();
+
+        doc.text('Ship To:', 40);
+        doc.font('Helvetica-Bold').text(estimate.ship_to || '-');
+        doc.font('Helvetica');
+
+        doc.moveDown(2);
+
+        /* ================= ITEMS TABLE ================= */
+        const tableTop = doc.y;
+        const col = {
+            item: 40,
+            qty: 280,
+            rate: 350,
+            amount: 450
+        };
+
+        // Table Header
+        doc.rect(40, tableTop, 520, 22).fill('#1f2937');
+        doc.fillColor('#ffffff').fontSize(11);
+        doc.text('Item', col.item, tableTop + 6);
+        doc.text('Qty', col.qty, tableTop + 6);
+        doc.text('Rate', col.rate, tableTop + 6);
+        doc.text('Amount', col.amount, tableTop + 6);
+
+        let y = tableTop + 28;
+        doc.fillColor('#000').fontSize(10);
 
         items.forEach(i => {
-            doc.text(`${i.item_name} | ${i.qty} x ${i.rate} = ${currency}${i.amount}`);
+            doc.text(i.item_name, col.item, y);
+            doc.text(i.qty, col.qty, y);
+            doc.text(`${currency}${i.rate}`, col.rate, y);
+            doc.text(`${currency}${i.amount}`, col.amount, y);
+            y += 20;
         });
 
-        doc.moveDown();
-        doc.text(`Subtotal: ${currency}${estimate.sub_total}`);
-        doc.text(`Tax: ${currency}${estimate.tax_amount}`);
-        doc.text(`Total: ${currency}${estimate.final_total}`);
+        doc.moveDown(3);
+
+        /* ================= TOTALS ================= */
+        const totalsY = y + 10;
+
+        doc.text('Sub Total:', 350, totalsY);
+        doc.text(`${currency}${estimate.sub_total}`, 480, totalsY, { align: 'right' });
+
+        doc.text('Tax:', 350, totalsY + 15);
+        doc.text(`${currency}${estimate.tax_amount}`, 480, totalsY + 15, { align: 'right' });
+
+        doc
+            .font('Helvetica-Bold')
+            .text('Total:', 350, totalsY + 35)
+            .text(`${currency}${estimate.final_total}`, 480, totalsY + 35, { align: 'right' })
+            .font('Helvetica');
+
+        doc.moveDown(4);
+
+        /* ================= TERMS ================= */
+        if (estimate.terms_and_conditions) {
+            doc.fontSize(11).text('Terms & Conditions:', { underline: true });
+            doc.fontSize(10).text(estimate.terms_and_conditions);
+        }
+
+        /* ================= FOOTER ================= */
+        doc
+            .fontSize(9)
+            .fillColor('#6b7280')
+            .text('This is a system generated estimate.', 40, 800, {
+                align: 'center'
+            });
+
         doc.end();
 
     } catch (err) {
         res.status(500).json({ error: err.message });
     }
 });
+
 
 // ==============================
 // DELETE ESTIMATE

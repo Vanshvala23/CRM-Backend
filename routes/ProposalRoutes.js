@@ -1,7 +1,7 @@
 const express = require("express");
 const router = express.Router();
 const db = require("../config/db");
-
+const PDFDocument=require('pdfkit');
 // ============================
 // HELPER: Calculate Proposal
 // ============================
@@ -164,5 +164,147 @@ router.delete("/:prop_id", async (req, res) => {
     conn.release();
   }
 });
+
+// ============================
+// GENERATE PROPOSAL PDF
+// ============================
+router.get("/:prop_id/pdf", async (req, res) => {
+  try {
+    const { prop_id } = req.params;
+
+    const [[proposal]] = await db.query(
+      "SELECT * FROM proposal WHERE prop_id=?",
+      [prop_id]
+    );
+
+    if (!proposal) {
+      return res.status(404).json({ message: "Proposal not found" });
+    }
+
+    const [items] = await db.query(
+      "SELECT * FROM proposal_items WHERE prop_id=?",
+      [prop_id]
+    );
+
+    const doc = new PDFDocument({ size: "A4", margin: 40 });
+    res.setHeader("Content-Type", "application/pdf");
+    doc.pipe(res);
+
+    const currency = proposal.currency || "₹";
+
+    /* ================= HEADER ================= */
+    doc
+      .fontSize(22)
+      .fillColor("#1f2937")
+      .text("PROPOSAL", { align: "center" });
+
+    doc.moveDown(1.5);
+
+    doc.fontSize(10).fillColor("#374151");
+    doc.text(`Proposal ID: ${proposal.prop_id}`, 40, 100);
+    doc.text(`Status: ${proposal.status}`, 420, 100);
+    doc.text(`Issue Date: ${proposal.issue_date}`, 40, 115);
+    doc.text(`Due Date: ${proposal.due_date}`, 420, 115);
+
+    doc.moveDown(2);
+
+    /* ================= CLIENT INFO ================= */
+    doc.fontSize(11).fillColor("#111827");
+    doc.text("Proposal To:", 40);
+    doc.font("Helvetica-Bold").text(proposal.to_ || "-");
+    doc.font("Helvetica");
+
+    doc.moveDown(0.5);
+    doc.text(proposal.address || "");
+    doc.text(
+      `${proposal.city || ""} ${proposal.state || ""} ${proposal.zip_code || ""}`
+    );
+    doc.text(proposal.country || "");
+
+    doc.moveDown(0.5);
+    doc.text(`Email: ${proposal.email || "-"}`);
+    doc.text(`Phone: ${proposal.phone || "-"}`);
+
+    doc.moveDown(2);
+
+    /* ================= ITEMS TABLE ================= */
+    const tableTop = doc.y;
+    const col = {
+      name: 40,
+      qty: 260,
+      rate: 330,
+      tax: 400,
+      total: 470
+    };
+
+    doc.rect(40, tableTop, 520, 22).fill("#1f2937");
+    doc.fillColor("#ffffff").fontSize(11);
+    doc.text("Item", col.name, tableTop + 6);
+    doc.text("Qty", col.qty, tableTop + 6);
+    doc.text("Rate", col.rate, tableTop + 6);
+    doc.text("Tax %", col.tax, tableTop + 6);
+    doc.text("Total", col.total, tableTop + 6);
+
+    let y = tableTop + 28;
+    doc.fillColor("#000").fontSize(10);
+
+    items.forEach(i => {
+      doc.text(i.name, col.name, y);
+      doc.text(i.quantity, col.qty, y);
+      doc.text(`${currency}${i.rate}`, col.rate, y);
+      doc.text(`${i.tax}%`, col.tax, y);
+      doc.text(`${currency}${i.total}`, col.total, y);
+      y += 20;
+    });
+
+    doc.moveDown(3);
+
+    /* ================= TOTALS ================= */
+    const totalsY = y + 10;
+
+    doc.text("Sub Total:", 350, totalsY);
+    doc.text(
+      `${currency}${proposal.subtotal}`,
+      480,
+      totalsY,
+      { align: "right" }
+    );
+
+    doc.text("Discount:", 350, totalsY + 15);
+    doc.text(
+      `${currency}${proposal.discount || 0}`,
+      480,
+      totalsY + 15,
+      { align: "right" }
+    );
+
+    doc
+      .font("Helvetica-Bold")
+      .text("Total Amount:", 350, totalsY + 35)
+      .text(
+        `${currency}${proposal.total_amount}`,
+        480,
+        totalsY + 35,
+        { align: "right" }
+      )
+      .font("Helvetica");
+
+    /* ================= FOOTER ================= */
+    doc
+      .fontSize(9)
+      .fillColor("#6b7280")
+      .text(
+        "This is a system generated proposal.",
+        40,
+        800,
+        { align: "center" }
+      );
+
+    doc.end();
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 
 module.exports = router;
