@@ -23,6 +23,7 @@ app.use("/api/group", require("./routes/groupRoutes"));
 app.use("/api/tasks", require("./routes/tasksRoutes"));
 app.use("/api/users",require("./routes/userRoutes"));
 app.use("/api/estimate",require("./routes/EstimatationRoutes"));
+app.use("/api/creditnote",require("./routes/creditNoteRoutes"))
 
 // Error handling middleware
 app.use((err, req, res, next) => {
