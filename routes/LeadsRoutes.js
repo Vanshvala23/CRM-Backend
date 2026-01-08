@@ -75,7 +75,7 @@ router.post("/import", upload.single("file"), async (req, res) => {
            lead_value,currency,visibility,contacted_today,description)
           VALUES ?
         `;
-        await db.promise().query(sql, [results]);
+        await db.query(sql, [results]);
         fs.unlinkSync(req.file.path);
         res.json({ message: "Leads imported successfully" });
       } catch (err) {
@@ -90,7 +90,7 @@ router.post("/import", upload.single("file"), async (req, res) => {
 ============================ */
 router.get("/", async (req, res) => {
   try {
-    const [rows] = await db.promise().query(
+    const [rows] = await db.query(
       "SELECT * FROM leads ORDER BY created_at DESC"
     );
     const leads = rows.map(l => ({ ...l, name: joinName(l.first_name, l.last_name) }));
@@ -105,7 +105,7 @@ router.get("/", async (req, res) => {
 ============================ */
 router.get("/:id", async (req, res) => {
   try {
-    const [rows] = await db.promise().query("SELECT * FROM leads WHERE id=?", [req.params.id]);
+    const [rows] = await db.query("SELECT * FROM leads WHERE id=?", [req.params.id]);
     if (!rows.length) return res.status(404).json({ message: "Lead not found" });
     const lead = { ...rows[0], name: joinName(rows[0].first_name, rows[0].last_name) };
     res.json(lead);
@@ -132,7 +132,7 @@ router.post("/", async (req, res) => {
       contacted_today: rest.contacted_today ?? 0
     };
 
-    const [result] = await db.promise().query("INSERT INTO leads SET ?", data);
+    const [result] = await db.query("INSERT INTO leads SET ?", data);
     res.status(201).json({ message: "Lead created", id: result.insertId });
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -162,7 +162,7 @@ router.put("/:id", async (req, res) => {
 
     if (!Object.keys(fields).length) return res.status(400).json({ message: "No fields to update" });
 
-    await db.promise().query("UPDATE leads SET ? WHERE id=?", [fields, req.params.id]);
+    await db.query("UPDATE leads SET ? WHERE id=?", [fields, req.params.id]);
     res.json({ message: "Lead updated" });
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -175,12 +175,12 @@ router.put("/:id", async (req, res) => {
 router.post("/:id/convert", async (req, res) => {
   try {
     const leadId = req.params.id;
-    const [rows] = await db.promise().query("SELECT * FROM leads WHERE id=?", [leadId]);
+    const [rows] = await db.query("SELECT * FROM leads WHERE id=?", [leadId]);
     if (!rows.length) return res.status(404).json({ message: "Lead not found" });
 
     const l = rows[0];
 
-    await db.promise().query(
+    await db.query(
       `INSERT INTO contact
       (lead_id, first_name, last_name, email, phone, company, website, position,
        address, city, state, country, zipcode)
@@ -202,7 +202,7 @@ router.post("/:id/convert", async (req, res) => {
       ]
     );
 
-    await db.promise().query("UPDATE leads SET converted_to_customer=1 WHERE id=?", [leadId]);
+    await db.query("UPDATE leads SET converted_to_customer=1 WHERE id=?", [leadId]);
     res.json({ message: "Lead converted successfully" });
   } catch (err) {
     res.status(500).json({ error: err.message });

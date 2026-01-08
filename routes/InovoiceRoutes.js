@@ -63,7 +63,7 @@ function numberToWords(num) {
 // --------------------------
 router.get("/", async (req, res) => {
   try {
-    const [rows] = await db.promise().query("SELECT * FROM invoice");
+    const [rows] = await db.query("SELECT * FROM invoice");
     res.json(rows);
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -77,13 +77,13 @@ router.get("/:inv_no", async (req, res) => {
   try {
     const { inv_no } = req.params;
 
-    const [invoiceRows] = await db.promise().query(
+    const [invoiceRows] = await db.query(
       "SELECT * FROM invoice WHERE inv_no=?",
       [inv_no]
     );
     if (!invoiceRows.length) return res.status(404).json({ message: "Invoice not found" });
 
-    const [items] = await db.promise().query(
+    const [items] = await db.query(
       "SELECT * FROM invoice_items WHERE invoice_id=?",
       [invoiceRows[0].id]
     );
@@ -102,7 +102,7 @@ router.post("/", async (req, res) => {
     const invoice = req.body;
 
     // Count invoices to generate invoice number
-    const [[{ total }]] = await db.promise().query("SELECT COUNT(*) AS total FROM invoice");
+    const [[{ total }]] = await db.query("SELECT COUNT(*) AS total FROM invoice");
     const invNo = generateInvNo(total);
 
     const calc = calculateInvoice(invoice.items, invoice.discount || 0, invoice.tax || 0);
@@ -115,7 +115,7 @@ router.post("/", async (req, res) => {
        terms_conditions, note)
       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
     `;
-    const [result] = await db.promise().query(sql, [
+    const [result] = await db.query(sql, [
       invNo,
       invoice.bill_to,
       invoice.ship_to,
@@ -137,7 +137,7 @@ router.post("/", async (req, res) => {
     const invoiceId = result.insertId;
     const values = invoice.items.map(item => [invoiceId, item.name, item.quantity, item.price, item.total]);
 
-    await db.promise().query(
+    await db.query(
       "INSERT INTO invoice_items (invoice_id, name, quantity, price, total) VALUES ?",
       [values]
     );
@@ -156,7 +156,7 @@ router.put("/:inv_no", async (req, res) => {
     const { inv_no } = req.params;
     const invoice = req.body;
 
-    const [result] = await db.promise().query(
+    const [result] = await db.query(
       "UPDATE invoice SET ? WHERE inv_no=?",
       [invoice, inv_no]
     );
@@ -174,7 +174,7 @@ router.put("/:inv_no", async (req, res) => {
 router.delete("/:inv_no", async (req, res) => {
   try {
     const { inv_no } = req.params;
-    const [result] = await db.promise().query("DELETE FROM invoice WHERE inv_no=?", [inv_no]);
+    const [result] = await db.contact.query("DELETE FROM invoice WHERE inv_no=?", [inv_no]);
 
     if (!result.affectedRows) return res.status(404).json({ message: "Invoice not found" });
     res.json({ message: "Invoice Deleted Successfully" });

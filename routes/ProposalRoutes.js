@@ -36,7 +36,7 @@ function calculateProposal(items, discount = 0, dis_type) {
 ============================ */
 router.get("/", async (req, res) => {
   try {
-    const [proposals] = await db.promise().query(
+    const [proposals] = await db.query(
       "SELECT * FROM proposal ORDER BY id DESC"
     );
     res.json(proposals);
@@ -52,14 +52,14 @@ router.get("/:prop_id", async (req, res) => {
   try {
     const { prop_id } = req.params;
 
-    const [proposal] = await db.promise().query(
+    const [proposal] = await db.query(
       "SELECT * FROM proposal WHERE prop_id=?",
       [prop_id]
     );
 
     if (!proposal.length) return res.status(404).json({ message: "Proposal not found" });
 
-    const [items] = await db.promise().query(
+    const [items] = await db.query(
       "SELECT * FROM proposal_items WHERE prop_id=?",
       [proposal[0].id]
     );
@@ -83,7 +83,7 @@ router.post("/", async (req, res) => {
     );
 
     // Generate Proposal ID
-    const [count] = await db.promise().query("SELECT COUNT(*) AS total FROM proposal");
+    const [count] = await db.query("SELECT COUNT(*) AS total FROM proposal");
     const propId = `#PROP${String(count[0].total + 1).padStart(4, "0")}`;
 
     const sql = `
@@ -95,7 +95,7 @@ router.post("/", async (req, res) => {
       ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
     `;
 
-    const [result] = await db.promise().query(sql, [
+    const [result] = await db.query(sql, [
       propId,
       proposal.subject,
       proposal.related,
@@ -130,7 +130,7 @@ router.post("/", async (req, res) => {
       i.total
     ]);
 
-    await db.promise().query(
+    await db.query(
       `INSERT INTO proposal_items
        (prop_id, name, quantity, rate, tax, price, total) VALUES ?`,
       [values]
@@ -147,7 +147,7 @@ router.post("/", async (req, res) => {
 ============================ */
 router.delete("/:prop_id", async (req, res) => {
   try {
-    const [result] = await db.promise().query(
+    const [result] = await db.query(
       "DELETE FROM proposal WHERE prop_id=?",
       [req.params.prop_id]
     );
