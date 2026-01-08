@@ -2,16 +2,16 @@ const express = require("express");
 const router = express.Router();
 const db = require("../config/db");
 
-/* ============================
-   HELPER: Calculate Proposal
-============================ */
+// ============================
+// HELPER: Calculate Proposal
+// ============================
 function calculateProposal(items, discount = 0, dis_type) {
   let subtotal = 0;
   let totalTax = 0;
 
   items.forEach(item => {
     const price = Number(item.quantity) * Number(item.rate);
-    const taxAmount = price * (Number(item.tax) / 100);
+    const taxAmount = price * (Number(item.tax || 0) / 100);
 
     item.price = price;
     item.total = price + taxAmount;
@@ -31,50 +31,43 @@ function calculateProposal(items, discount = 0, dis_type) {
   return { subtotal, total_amount, items };
 }
 
-/* ============================
-   GET ALL PROPOSALS
-============================ */
+// ============================
+// GET ALL PROPOSALS
+// ============================
 router.get("/", async (req, res) => {
   try {
-    const [proposals] = await db.query(
-      "SELECT * FROM proposal ORDER BY id DESC"
-    );
+    const [proposals] = await db.query("SELECT * FROM proposal ORDER BY id DESC");
     res.json(proposals);
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
 });
 
-/* ============================
-   GET SINGLE PROPOSAL + ITEMS
-============================ */
+// ============================
+// GET SINGLE PROPOSAL + ITEMS
+// ============================
 router.get("/:prop_id", async (req, res) => {
   try {
     const { prop_id } = req.params;
 
-    const [proposal] = await db.query(
-      "SELECT * FROM proposal WHERE prop_id=?",
-      [prop_id]
-    );
-
+    const [proposal] = await db.query("SELECT * FROM proposal WHERE prop_id=?", [prop_id]);
     if (!proposal.length) return res.status(404).json({ message: "Proposal not found" });
 
-    const [items] = await db.query(
-      "SELECT * FROM proposal_items WHERE prop_id=?",
-      [proposal[0].id]
-    );
-
+    const [items] = await db.query("SELECT * FROM proposal_items WHERE prop_id=?", [prop_id]);
     res.json({ proposal: proposal[0], items });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
 });
 
-/* ============================
-   CREATE PROPOSAL + ITEMS
-============================ */
+// ============================
+// CREATE PROPOSAL + ITEMS
+// ============================
 router.post("/", async (req, res) => {
+  const conn = await db.getConnection(); // Use transaction
   try {
+    await conn.beginTransaction();
+
     const proposal = req.body;
     const { subtotal, total_amount, items } = calculateProposal(
       proposal.items,
@@ -83,7 +76,7 @@ router.post("/", async (req, res) => {
     );
 
     // Generate Proposal ID
-    const [count] = await db.query("SELECT COUNT(*) AS total FROM proposal");
+    const [count] = await conn.query("SELECT COUNT(*) AS total FROM proposal");
     const propId = `#PROP${String(count[0].total + 1).padStart(4, "0")}`;
 
     const sql = `
@@ -95,7 +88,7 @@ router.post("/", async (req, res) => {
       ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
     `;
 
-    const [result] = await db.query(sql, [
+    const [result] = await conn.query(sql, [
       propId,
       proposal.subject,
       proposal.related,
@@ -118,46 +111,57 @@ router.post("/", async (req, res) => {
       total_amount
     ]);
 
-    const proposalId = result.insertId;
-
+    // Insert items
     const values = items.map(i => [
-      proposalId,
-      i.name,
+      propId,        // Use propId, not auto-increment id
+      i.name || i.item_name,
       i.quantity,
       i.rate,
-      i.tax,
+      i.tax || 0,
       i.price,
       i.total
     ]);
 
-    await db.query(
-      `INSERT INTO proposal_items
-       (prop_id, name, quantity, rate, tax, price, total) VALUES ?`,
+    await conn.query(
+      `INSERT INTO proposal_items (prop_id, name, quantity, rate, tax, price, total) VALUES ?`,
       [values]
     );
 
+    await conn.commit();
     res.status(201).json({ message: "Proposal Created Successfully", prop_id: propId });
   } catch (err) {
+    await conn.rollback();
     res.status(500).json({ error: err.message });
+  } finally {
+    conn.release();
   }
 });
 
-/* ============================
-   DELETE PROPOSAL (CASCADE)
-============================ */
+// ============================
+// DELETE PROPOSAL (CASCADE)
+// ============================
 router.delete("/:prop_id", async (req, res) => {
+  const conn = await db.getConnection();
   try {
-    const [result] = await db.query(
-      "DELETE FROM proposal WHERE prop_id=?",
-      [req.params.prop_id]
-    );
+    await conn.beginTransaction();
 
-    if (!result.affectedRows)
+    // Delete items first
+    await conn.query("DELETE FROM proposal_items WHERE prop_id=?", [req.params.prop_id]);
+
+    // Delete proposal
+    const [result] = await conn.query("DELETE FROM proposal WHERE prop_id=?", [req.params.prop_id]);
+    if (!result.affectedRows) {
+      await conn.rollback();
       return res.status(404).json({ message: "Proposal not found" });
+    }
 
+    await conn.commit();
     res.json({ message: "Proposal Deleted Successfully" });
   } catch (err) {
+    await conn.rollback();
     res.status(500).json({ error: err.message });
+  } finally {
+    conn.release();
   }
 });
 
