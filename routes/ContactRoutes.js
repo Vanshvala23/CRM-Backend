@@ -31,7 +31,7 @@ function joinName(first_name, last_name) {
 /* ======================
    IMPORT CONTACTS FROM CSV
 ====================== */
-router.post("/import", upload.single("file"), (req, res) => {
+router.post("/import", upload.single("file"), async (req, res) => {
   if (!req.file) return res.status(400).json({ message: "CSV file required" });
 
   const results = [];
@@ -57,72 +57,74 @@ router.post("/import", upload.single("file"), (req, res) => {
         row.GST,
       ]);
     })
-    .on("end", () => {
-      const sql = `
-        INSERT INTO contact
-        (first_name,last_name,email,phone,address,city,state,country,zipcode,website,currency,language,GST)
-        VALUES ?
-      `;
-
-      db.query(sql, [results], (err, result) => {
+    .on("end", async () => {
+      try {
+        const sql = `
+          INSERT INTO contact
+          (first_name,last_name,email,phone,address,city,state,country,zipcode,website,currency,language,GST)
+          VALUES ?
+        `;
+        const [result] = await db.query(sql, [results]);
         fs.unlinkSync(req.file.path);
-        if (err) return res.status(500).json(err);
 
         res.json({ message: `Imported ${result.affectedRows} contacts successfully` });
-      });
+      } catch (err) {
+        fs.unlinkSync(req.file.path);
+        res.status(500).json({ message: err.message });
+      }
     });
 });
 
 /* ======================
    GET ALL CONTACTS
 ====================== */
-router.get("/", (req, res) => {
-  db.query("SELECT * FROM contact WHERE deleted_at IS NULL", (err, rows) => {
-    if (err) return res.status(500).json(err);
-
-    const data = rows.map(c => ({
+router.get("/", async (req, res) => {
+  try {
+    const [rows] = await db.query("SELECT * FROM contact WHERE deleted_at IS NULL");
+    const data = rows.map((c) => ({
       ...c,
       name: joinName(c.first_name, c.last_name),
     }));
-
     res.json(data);
-  });
+  } catch (err) {
+    res.status(500).json({ message: err.message });
+  }
 });
 
 /* ======================
    GET SINGLE CONTACT
 ====================== */
-router.get("/:id", (req, res) => {
-  db.query(
-    `
-    SELECT c.*, g.id AS group_id, g.name AS group_name
-    FROM contact c
-    LEFT JOIN customer_group_map cg ON c.id = cg.customer_id
-    LEFT JOIN customer_groups g ON cg.group_id = g.id
-    WHERE c.id=? AND c.deleted_at IS NULL
-    `,
-    [req.params.id],
-    (err, rows) => {
-      if (err) return res.status(500).json(err);
-      if (!rows.length) return res.status(404).json({ message: "Not found" });
+router.get("/:id", async (req, res) => {
+  try {
+    const [rows] = await db.query(
+      `
+      SELECT c.*, g.id AS group_id, g.name AS group_name
+      FROM contact c
+      LEFT JOIN customer_group_map cg ON c.id = cg.customer_id
+      LEFT JOIN customer_groups g ON cg.group_id = g.id
+      WHERE c.id=? AND c.deleted_at IS NULL
+      `,
+      [req.params.id]
+    );
 
-      const contact = {
-        ...rows[0],
-        name: joinName(rows[0].first_name, rows[0].last_name),
-        groups: rows
-          .filter(r => r.group_id)
-          .map(r => ({ id: r.group_id, name: r.group_name })),
-      };
+    if (!rows.length) return res.status(404).json({ message: "Not found" });
 
-      res.json(contact);
-    }
-  );
+    const contact = {
+      ...rows[0],
+      name: joinName(rows[0].first_name, rows[0].last_name),
+      groups: rows.filter((r) => r.group_id).map((r) => ({ id: r.group_id, name: r.group_name })),
+    };
+
+    res.json(contact);
+  } catch (err) {
+    res.status(500).json({ message: err.message });
+  }
 });
 
 /* ======================
    CREATE CONTACT
 ====================== */
-router.post("/", (req, res) => {
+router.post("/", async (req, res) => {
   const {
     name,
     email,
@@ -135,7 +137,7 @@ router.post("/", (req, res) => {
     website,
     currency,
     language,
-    GST
+    GST,
   } = req.body;
 
   if (!name || !email)
@@ -149,51 +151,8 @@ router.post("/", (req, res) => {
     VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)
   `;
 
-  db.query(
-    sql,
-    [first_name,last_name,email,phone,address,city,state,country,zipcode,website,currency,language,GST],
-    (err, result) => {
-      if (err) {
-        if (err.code === "ER_DUP_ENTRY")
-          return res.status(409).json({ message: "Email already exists" });
-        return res.status(500).json(err);
-      }
-      res.status(201).json({ message: "Contact Added", id: result.insertId });
-    }
-  );
-});
-
-/* ======================
-   UPDATE CONTACT
-====================== */
-router.put("/:id", (req, res) => {
-  const {
-    name,
-    email,
-    phone,
-    address,
-    city,
-    state,
-    country,
-    zipcode,
-    website,
-    currency,
-    language,
-    GST
-  } = req.body;
-
-  const { first_name, last_name } = name ? splitName(name) : {};
-
-  const sql = `
-    UPDATE contact SET
-    first_name=?, last_name=?, email=?, phone=?, address=?, city=?, state=?,
-    country=?, zipcode=?, website=?, currency=?, language=?, GST=?
-    WHERE id=?
-  `;
-
-  db.query(
-    sql,
-    [
+  try {
+    const [result] = await db.query(sql, [
       first_name,
       last_name,
       email,
@@ -207,27 +166,78 @@ router.put("/:id", (req, res) => {
       currency,
       language,
       GST,
-      req.params.id
-    ],
-    (err) => {
-      if (err) return res.status(500).json(err);
-      res.json({ message: "Contact Updated" });
-    }
-  );
+    ]);
+
+    res.status(201).json({ message: "Contact Added", id: result.insertId });
+  } catch (err) {
+    if (err.code === "ER_DUP_ENTRY")
+      return res.status(409).json({ message: "Email already exists" });
+    res.status(500).json({ message: err.message });
+  }
+});
+
+/* ======================
+   UPDATE CONTACT
+====================== */
+router.put("/:id", async (req, res) => {
+  const {
+    name,
+    email,
+    phone,
+    address,
+    city,
+    state,
+    country,
+    zipcode,
+    website,
+    currency,
+    language,
+    GST,
+  } = req.body;
+
+  const { first_name, last_name } = name ? splitName(name) : { first_name: null, last_name: null };
+
+  const sql = `
+    UPDATE contact SET
+    first_name=?, last_name=?, email=?, phone=?, address=?, city=?, state=?,
+    country=?, zipcode=?, website=?, currency=?, language=?, GST=?
+    WHERE id=?
+  `;
+
+  try {
+    await db.query(sql, [
+      first_name,
+      last_name,
+      email,
+      phone,
+      address,
+      city,
+      state,
+      country,
+      zipcode,
+      website,
+      currency,
+      language,
+      GST,
+      req.params.id,
+    ]);
+
+    res.json({ message: "Contact Updated" });
+  } catch (err) {
+    res.status(500).json({ message: err.message });
+  }
 });
 
 /* ======================
    SOFT DELETE CONTACT
 ====================== */
-router.delete("/:id", (req, res) => {
-  db.query(
-    "UPDATE contact SET deleted_at=NOW() WHERE id=?",
-    [req.params.id],
-    (err) => {
-      if (err) return res.status(500).json(err);
-      res.json({ message: "Contact Deleted" });
-    }
-  );
+router.delete("/:id", async (req, res) => {
+  try {
+    await db.query("UPDATE contact SET deleted_at=NOW() WHERE id=?", [req.params.id]);
+    res.json({ message: "Contact Deleted" });
+  } catch (err) {
+    res.status(500).json({ message: err.message });
+  }
 });
 
 module.exports = router;
