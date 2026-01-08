@@ -6,330 +6,205 @@ const PDFDocument = require('pdfkit');
 /* ==============================
    GENERATE ESTIMATE NUMBER
 ================================ */
-async function generateEstimateNumber(conn) {
-  const [[row]] = await conn.query(
-    `SELECT estimate_number
-     FROM estimates
-     ORDER BY id DESC
-     LIMIT 1
-     FOR UPDATE`
-  );
+async function generateEstimateNumber() {
+    const [rows] = await db.query(
+        `SELECT estimate_number FROM estimates ORDER BY id DESC LIMIT 1`
+    );
 
-  let next = 1;
-  if (row?.estimate_number) {
-    next = parseInt(row.estimate_number.replace('EST-', '')) + 1;
-  }
+    let next = 1;
+    if (rows.length && rows[0].estimate_number) {
+        next = parseInt(rows[0].estimate_number.replace('EST-', '')) + 1;
+    }
 
-  return `EST-${String(next).padStart(6, '0')}`;
-}
-
-/* ==============================
-   GENERATE INVOICE NUMBER
-================================ */
-async function generateInvoiceNumber(conn) {
-  const [[row]] = await conn.query(
-    `SELECT inv_no
-     FROM invoice
-     ORDER BY id DESC
-     LIMIT 1
-     FOR UPDATE`
-  );
-
-  let next = 1;
-  if (row?.inv_no) {
-    next = parseInt(row.inv_no.replace('INV-', '')) + 1;
-  }
-
-  return `INV-${String(next).padStart(6, '0')}`;
+    return `EST-${String(next).padStart(6, '0')}`;
 }
 
 /* ==============================
    CREATE ESTIMATE
 ================================ */
 router.post('/', async (req, res) => {
-  const {
-    customer_id,
-    bill_to,
-    ship_to,
-    issue_date,
-    expiry_date,
-    items,
-    terms_conditions
-  } = req.body;
+    const {
+        customer_id, bill_to, ship_to, issue_date, expiry_date, items, terms_and_conditions, tax_rate, discount_type, currency
+    } = req.body;
 
-  if (!items || !items.length) {
-    return res.status(400).json({ message: 'Items required' });
-  }
+    if (!items || !items.length) return res.status(400).json({ message: 'Items required' });
 
-  const conn = await db.getConnection();
-  try {
-    await conn.beginTransaction();
-
-    const estimate_number = await generateEstimateNumber(conn);
+    const estimate_number = await generateEstimateNumber();
 
     let sub_total = 0;
-    let tax = 0;
+    let tax_amount = 0;
 
     items.forEach(i => {
-      const amt = i.qty * i.rate;
-      sub_total += amt;
-      tax += amt * (i.tax / 100);
+        const amount = i.qty * i.rate;
+        sub_total += amount;
+        tax_amount += amount * ((i.tax || tax_rate || 0) / 100);
+        i.amount = amount;
     });
 
-    const final_total = sub_total + tax;
+    let final_total = sub_total + tax_amount;
 
-    const [result] = await conn.query(
-      `INSERT INTO estimates
-      (estimate_number, customer_id, bill_to, ship_to,
-       issue_date, expiry_date, sub_total, tax, final_total,
-       terms_conditions, status)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'Draft')`,
-      [
-        estimate_number,
-        customer_id,
-        bill_to,
-        ship_to,
-        issue_date,
-        expiry_date,
-        sub_total,
-        tax,
-        final_total,
-        terms_conditions
-      ]
-    );
-
-    for (const i of items) {
-      await conn.query(
-        `INSERT INTO estimate_items
-        (estimate_id, item_name, qty, rate, tax, amount)
-        VALUES (?, ?, ?, ?, ?, ?)`,
-        [
-          result.insertId,
-          i.item_name,
-          i.qty,
-          i.rate,
-          i.tax,
-          i.qty * i.rate
-        ]
-      );
+    // Apply discount
+    if (discount_type === 'Before tax' && req.body.discount) {
+        final_total = (sub_total - req.body.discount) + tax_amount;
+    } else if (discount_type === 'After tax' && req.body.discount) {
+        final_total -= req.body.discount;
     }
 
-    await conn.commit();
-    res.status(201).json({ message: 'Estimate created', estimate_number });
+    try {
+        const [result] = await db.query(
+            `INSERT INTO estimates 
+            (estimate_number, customer_id, bill_to, ship_to, issue_date, expiry_date, sub_total, tax_rate, tax_amount, final_total, terms_and_conditions, status, currency, discount_type) 
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'Draft', ?, ?)`,
+            [estimate_number, customer_id, bill_to, ship_to, issue_date, expiry_date, sub_total, tax_rate || 18, tax_amount, final_total, terms_and_conditions, currency || '₹', discount_type || 'No discount']
+        );
 
-  } catch (err) {
-    await conn.rollback();
-    res.status(500).json({ error: err.message });
-  } finally {
-    conn.release();
-  }
+        const estimate_id = result.insertId;
+
+        for (const i of items) {
+            await db.query(
+                `INSERT INTO estimate_items (estimate_id, item_name, qty, rate, tax, amount) VALUES (?, ?, ?, ?, ?, ?)`,
+                [estimate_id, i.item_name, i.qty, i.rate, i.tax || tax_rate || 18, i.amount]
+            );
+        }
+
+        res.status(201).json({ message: 'Estimate created', estimate_number });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
 });
 
 /* ==============================
    UPDATE ESTIMATE
 ================================ */
 router.put('/:id', async (req, res) => {
-  const { id } = req.params;
-  const { bill_to, ship_to, issue_date, expiry_date, items, terms_conditions } = req.body;
+    const { id } = req.params;
+    const { bill_to, ship_to, issue_date, expiry_date, items, terms_and_conditions, tax_rate, discount_type, currency } = req.body;
 
-  const conn = await db.getConnection();
-  try {
-    await conn.beginTransaction();
+    try {
+        let sub_total = 0;
+        let tax_amount = 0;
 
-    let sub_total = 0;
-    let tax = 0;
+        items.forEach(i => {
+            const amount = i.qty * i.rate;
+            sub_total += amount;
+            tax_amount += amount * ((i.tax || tax_rate || 0) / 100);
+            i.amount = amount;
+        });
 
-    items.forEach(i => {
-      const amt = i.qty * i.rate;
-      sub_total += amt;
-      tax += amt * (i.tax / 100);
-    });
+        let final_total = sub_total + tax_amount;
 
-    const final_total = sub_total + tax;
+        if (discount_type === 'Before tax' && req.body.discount) {
+            final_total = (sub_total - req.body.discount) + tax_amount;
+        } else if (discount_type === 'After tax' && req.body.discount) {
+            final_total -= req.body.discount;
+        }
 
-    await conn.query(
-      `UPDATE estimates SET
-       bill_to=?, ship_to=?, issue_date=?, expiry_date=?,
-       sub_total=?, tax=?, final_total=?, terms_conditions=?
-       WHERE id=?`,
-      [
-        bill_to,
-        ship_to,
-        issue_date,
-        expiry_date,
-        sub_total,
-        tax,
-        final_total,
-        terms_conditions,
-        id
-      ]
-    );
+        await db.query(
+            `UPDATE estimates SET bill_to=?, ship_to=?, issue_date=?, expiry_date=?, sub_total=?, tax_rate=?, tax_amount=?, final_total=?, terms_and_conditions=?, currency=?, discount_type=? WHERE id=?`,
+            [bill_to, ship_to, issue_date, expiry_date, sub_total, tax_rate || 18, tax_amount, final_total, terms_and_conditions, currency || '₹', discount_type || 'No discount', id]
+        );
 
-    await conn.query(`DELETE FROM estimate_items WHERE estimate_id=?`, [id]);
+        await db.query(`DELETE FROM estimate_items WHERE estimate_id=?`, [id]);
 
-    for (const i of items) {
-      await conn.query(
-        `INSERT INTO estimate_items
-        (estimate_id, item_name, qty, rate, tax, amount)
-        VALUES (?, ?, ?, ?, ?, ?)`,
-        [id, i.item_name, i.qty, i.rate, i.tax, i.qty * i.rate]
-      );
+        for (const i of items) {
+            await db.query(
+                `INSERT INTO estimate_items (estimate_id, item_name, qty, rate, tax, amount) VALUES (?, ?, ?, ?, ?, ?)`,
+                [id, i.item_name, i.qty, i.rate, i.tax || tax_rate || 18, i.amount]
+            );
+        }
+
+        res.json({ message: 'Estimate updated' });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
     }
-
-    await conn.commit();
-    res.json({ message: 'Estimate updated' });
-
-  } catch (err) {
-    await conn.rollback();
-    res.status(500).json({ error: err.message });
-  } finally {
-    conn.release();
-  }
 });
 
 /* ==============================
-   STATUS WORKFLOW
-================================ */
-router.patch('/:id/status', async (req, res) => {
-  const allowed = ['Draft', 'Sent', 'Accepted', 'Rejected', 'Converted'];
-
-  if (!allowed.includes(req.body.status)) {
-    return res.status(400).json({ message: 'Invalid status' });
-  }
-
-  await db.query(
-    `UPDATE estimates SET status=? WHERE id=?`,
-    [req.body.status, req.params.id]
-  );
-
-  res.json({ message: 'Status updated' });
-});
-
-/* ==============================
-   CONVERT ESTIMATE → INVOICE
-================================ */
-router.post('/:id/convert', async (req, res) => {
-  const conn = await db.getConnection();
-  try {
-    await conn.beginTransaction();
-
-    const [[estimate]] = await conn.query(
-      `SELECT e.*,
-              CONCAT(c.first_name, ' ', c.last_name) AS customer_name
-       FROM estimates e
-       JOIN contact c ON c.id = e.customer_id
-       WHERE e.id=? AND e.status='Accepted'`,
-      [req.params.id]
-    );
-
-    if (!estimate) {
-      return res.status(400).json({ message: 'Estimate must be Accepted' });
-    }
-
-    const inv_no = await generateInvoiceNumber(conn);
-
-    const [invoice] = await conn.query(
-      `INSERT INTO invoice
-      (inv_no, bill_to, ship_to, company_name,
-       sub_total, tax, total, issue_date, status)
-      VALUES (?, ?, ?, ?, ?, ?, ?, NOW(), 'Draft')`,
-      [
-        inv_no,
-        estimate.bill_to,
-        estimate.ship_to,
-        estimate.customer_name,
-        estimate.sub_total,
-        estimate.tax,
-        estimate.final_total
-      ]
-    );
-
-    const [items] = await conn.query(
-      `SELECT * FROM estimate_items WHERE estimate_id=?`,
-      [estimate.id]
-    );
-
-    for (const i of items) {
-      await conn.query(
-        `INSERT INTO invoice_items
-        (invoice_id, item_name, qty, rate, tax, amount)
-        VALUES (?, ?, ?, ?, ?, ?)`,
-        [invoice.insertId, i.item_name, i.qty, i.rate, i.tax, i.amount]
-      );
-    }
-
-    await conn.query(
-      `UPDATE estimates SET status='Converted' WHERE id=?`,
-      [estimate.id]
-    );
-
-    await conn.commit();
-    res.json({ message: 'Converted to invoice', inv_no });
-
-  } catch (err) {
-    await conn.rollback();
-    res.status(500).json({ error: err.message });
-  } finally {
-    conn.release();
-  }
-});
-
-/* ==============================
-   PDF GENERATION
-================================ */
-router.get('/:id/pdf', async (req, res) => {
-  const [[estimate]] = await db.query(
-    `SELECT e.*,
-            CONCAT(c.first_name, ' ', c.last_name) AS customer_name
-     FROM estimates e
-     JOIN contact c ON c.id = e.customer_id
-     WHERE e.id=?`,
-    [req.params.id]
-  );
-
-  const [items] = await db.query(
-    `SELECT * FROM estimate_items WHERE estimate_id=?`,
-    [req.params.id]
-  );
-
-  const doc = new PDFDocument();
-  res.setHeader('Content-Type', 'application/pdf');
-  doc.pipe(res);
-
-  doc.fontSize(20).text('ESTIMATE', { align: 'center' });
-  doc.moveDown();
-  doc.text(`Estimate No: ${estimate.estimate_number}`);
-  doc.text(`Customer: ${estimate.customer_name}`);
-  doc.moveDown();
-
-  items.forEach(i => {
-    doc.text(`${i.item_name} | ${i.qty} x ${i.rate} = ₹${i.amount}`);
-  });
-
-  doc.moveDown();
-  doc.text(`Subtotal: ₹${estimate.sub_total}`);
-  doc.text(`Tax: ₹${estimate.tax}`);
-  doc.text(`Total: ₹${estimate.final_total}`);
-  doc.end();
-});
-
-/* ==============================
-   GET ESTIMATE LIST
+   GET ESTIMATES LIST
 ================================ */
 router.get('/', async (req, res) => {
-  const [rows] = await db.query(
-    `SELECT e.id,
-            e.estimate_number,
-            CONCAT(c.first_name, ' ', c.last_name) AS customer_name,
-            e.issue_date,
-            e.final_total,
-            e.status
-     FROM estimates e
-     JOIN contact c ON c.id = e.customer_id
-     ORDER BY e.id DESC`
-  );
-
-  res.json(rows);
+    try {
+        const [rows] = await db.query(
+            `SELECT e.id, e.estimate_number, CONCAT(c.first_name, ' ', c.last_name) AS customer_name, e.issue_date, e.final_total, e.status 
+             FROM estimates e 
+             JOIN contact c ON c.id = e.customer_id 
+             ORDER BY e.id DESC`
+        );
+        res.json(rows);
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
 });
+
+/* ==============================
+   GENERATE PDF
+================================ */
+router.get('/:id/pdf', async (req, res) => {
+    try {
+        const [[estimate]] = await db.query(
+            `SELECT e.*, CONCAT(c.first_name, ' ', c.last_name) AS customer_name FROM estimates e JOIN contact c ON c.id = e.customer_id WHERE e.id=?`,
+            [req.params.id]
+        );
+
+        const [items] = await db.query(`SELECT * FROM estimate_items WHERE estimate_id=?`, [req.params.id]);
+
+        const doc = new PDFDocument();
+        res.setHeader('Content-Type', 'application/pdf');
+        doc.pipe(res);
+
+        doc.fontSize(20).text('ESTIMATE', { align: 'center' });
+        doc.moveDown();
+        doc.text(`Estimate No: ${estimate.estimate_number}`);
+        doc.text(`Customer: ${estimate.customer_name}`);
+        doc.moveDown();
+
+        items.forEach(i => {
+            doc.text(`${i.item_name} | ${i.qty} x ${i.rate} = ${currency || '₹'}${i.amount}`);
+        });
+
+        doc.moveDown();
+        doc.text(`Subtotal: ${currency || '₹'}${estimate.sub_total}`);
+        doc.text(`Tax: ${currency || '₹'}${estimate.tax_amount}`);
+        doc.text(`Total: ${currency || '₹'}${estimate.final_total}`);
+        doc.end();
+
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+
+/* ==============================
+   DELETE ESTIMATE
+================================ */
+router.delete('/:id', async (req, res) => {
+    const { id } = req.params;
+
+    const conn = await db.getConnection();
+    try {
+        await conn.beginTransaction();
+
+        // Delete estimate items first
+        await conn.query(`DELETE FROM estimate_items WHERE estimate_id=?`, [id]);
+
+        // Delete the estimate
+        const [result] = await conn.query(`DELETE FROM estimates WHERE id=?`, [id]);
+
+        if (result.affectedRows === 0) {
+            await conn.rollback();
+            return res.status(404).json({ message: 'Estimate not found' });
+        }
+
+        await conn.commit();
+        res.json({ message: 'Estimate deleted successfully' });
+
+    } catch (err) {
+        await conn.rollback();
+        res.status(500).json({ error: err.message });
+    } finally {
+        conn.release();
+    }
+});
+
 
 module.exports = router;
