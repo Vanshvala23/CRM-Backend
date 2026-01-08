@@ -160,9 +160,8 @@ router.delete('/:id', async (req, res) => {
         conn.release();
     }
 });
-
 // ==============================
-// PDF GENERATION
+// PDF GENERATION (IMPROVED UI)
 // ==============================
 router.get('/:id/pdf', async (req, res) => {
     try {
@@ -175,44 +174,139 @@ router.get('/:id/pdf', async (req, res) => {
 
         if (!cn) return res.status(404).json({ message: 'Credit Note not found' });
 
-        const [items] = await db.query(`SELECT * FROM credit_note_items WHERE credit_note_id=?`, [req.params.id]);
+        const [items] = await db.query(
+            `SELECT * FROM credit_note_items WHERE credit_note_id=?`,
+            [req.params.id]
+        );
 
-        const doc = new PDFDocument({ margin: 30, size: 'A4' });
+        const doc = new PDFDocument({ size: 'A4', margin: 40 });
         res.setHeader('Content-Type', 'application/pdf');
         doc.pipe(res);
 
         const currency = cn.currency || '₹';
 
-        doc.fontSize(22).text('CREDIT NOTE', { align: 'center' });
-        doc.moveDown();
-        doc.fontSize(12).text(`Credit Note #: ${cn.credit_note_number}`);
-        doc.text(`Customer: ${cn.customer_name}`);
-        doc.text(`Bill To: ${cn.bill_to}`);
-        doc.text(`Ship To: ${cn.ship_to || '-'}`);
-        doc.text(`Estimate #: ${cn.estimate_number || '-'}`);
-        doc.text(`Estimate Date: ${cn.estimate_date}`);
-        doc.text(`Expiry Date: ${cn.expiry_date}`);
-        doc.text(`Currency: ${currency}`);
-        doc.text(`Status: ${cn.status}`);
-        doc.moveDown();
+        /* ================= HEADER ================= */
+        doc
+            .fontSize(22)
+            .fillColor('#1f2937')
+            .text('CREDIT NOTE', { align: 'center' });
 
-        doc.fontSize(14).text('Items:', { underline: true });
-        items.forEach(i => {
-            doc.fontSize(12).text(
-                `${i.item_name} | ${i.description || ''} | Qty: ${i.qty} ${i.unit || ''} x ${currency}${i.rate} | Tax: ${i.tax}% | Amount: ${currency}${i.amount}`
-            );
+        doc.moveDown(1.5);
+
+        doc
+            .fontSize(10)
+            .fillColor('#374151');
+
+        doc.text(`Credit Note #: ${cn.credit_note_number}`, 40, 100);
+        doc.text(`Status: ${cn.status}`, 400, 100);
+
+        doc.text(`Estimate #: ${cn.estimate_number || '-'}`, 40, 115);
+        doc.text(`Estimate Date: ${cn.estimate_date}`, 400, 115);
+
+        doc.moveDown(2);
+
+        /* ================= CUSTOMER INFO ================= */
+        doc
+            .fontSize(11)
+            .fillColor('#111827')
+            .text('Bill To:', 40)
+            .font('Helvetica-Bold')
+            .text(cn.customer_name)
+            .font('Helvetica')
+            .text(cn.bill_to || '-');
+
+        doc
+            .fontSize(11)
+            .fillColor('#111827')
+            .text('Ship To:', 320, 160)
+            .font('Helvetica-Bold')
+            .text(cn.ship_to || '-', 320)
+            .font('Helvetica');
+
+        doc.moveDown(2);
+
+        /* ================= ITEMS TABLE ================= */
+        const tableTop = doc.y;
+        const col = {
+            item: 40,
+            qty: 260,
+            rate: 320,
+            tax: 390,
+            amount: 460
+        };
+
+        doc
+            .fontSize(11)
+            .fillColor('#ffffff')
+            .rect(40, tableTop, 520, 20)
+            .fill('#1f2937');
+
+        doc
+            .fillColor('#ffffff')
+            .text('Item', col.item, tableTop + 5)
+            .text('Qty', col.qty, tableTop + 5)
+            .text('Rate', col.rate, tableTop + 5)
+            .text('Tax', col.tax, tableTop + 5)
+            .text('Amount', col.amount, tableTop + 5);
+
+        let y = tableTop + 25;
+        doc.fillColor('#000');
+
+        items.forEach((i, index) => {
+            doc
+                .fontSize(10)
+                .text(i.item_name, col.item, y)
+                .text(i.qty, col.qty, y)
+                .text(`${currency}${i.rate}`, col.rate, y)
+                .text(`${i.tax}%`, col.tax, y)
+                .text(`${currency}${i.amount}`, col.amount, y);
+
+            y += 20;
         });
 
-        doc.moveDown();
-        doc.text(`Sub Total: ${currency}${cn.sub_total}`);
-        doc.text(`Discount: ${cn.discount || 0}`);
-        doc.text(`Adjustment: ${cn.adjustment || 0}`);
-        doc.text(`Tax: ${cn.tax_amount}`);
-        doc.text(`Total: ${currency}${cn.total}`);
-        doc.moveDown();
-        if (cn.client_note) doc.text(`Client Note: ${cn.client_note}`);
-        if (cn.admin_note) doc.text(`Admin Note: ${cn.admin_note}`);
-        if (cn.terms_and_conditions) doc.text(`Terms & Conditions: ${cn.terms_and_conditions}`);
+        doc.moveDown(3);
+
+        /* ================= TOTALS ================= */
+        const totalsY = y + 10;
+        doc
+            .fontSize(11)
+            .text('Sub Total:', 360, totalsY)
+            .text(`${currency}${cn.sub_total}`, 460, totalsY, { align: 'right' });
+
+        doc.text('Discount:', 360, totalsY + 15);
+        doc.text(`${currency}${cn.discount || 0}`, 460, totalsY + 15, { align: 'right' });
+
+        doc.text('Adjustment:', 360, totalsY + 30);
+        doc.text(`${currency}${cn.adjustment || 0}`, 460, totalsY + 30, { align: 'right' });
+
+        doc.text('Tax:', 360, totalsY + 45);
+        doc.text(`${currency}${cn.tax_amount}`, 460, totalsY + 45, { align: 'right' });
+
+        doc
+            .font('Helvetica-Bold')
+            .text('Total:', 360, totalsY + 65)
+            .text(`${currency}${cn.total}`, 460, totalsY + 65, { align: 'right' })
+            .font('Helvetica');
+
+        doc.moveDown(4);
+
+        /* ================= NOTES ================= */
+        if (cn.client_note) {
+            doc.fontSize(11).text('Client Note:', { underline: true });
+            doc.fontSize(10).text(cn.client_note);
+            doc.moveDown();
+        }
+
+        if (cn.terms_and_conditions) {
+            doc.fontSize(11).text('Terms & Conditions:', { underline: true });
+            doc.fontSize(10).text(cn.terms_and_conditions);
+        }
+
+        /* ================= FOOTER ================= */
+        doc
+            .fontSize(9)
+            .fillColor('#6b7280')
+            .text('Thank you for your business!', 40, 800, { align: 'center' });
 
         doc.end();
 
