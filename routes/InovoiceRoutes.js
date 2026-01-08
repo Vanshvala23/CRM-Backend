@@ -1,14 +1,16 @@
 const express = require("express");
 const router = express.Router();
-const db = require("../config/db");
+const db = require("../config/db"); // mysql2/promise connection
 
+// --------------------------
+// Helpers
+// --------------------------
 function generateInvNo(count) {
   return `#INV${String(count + 1).padStart(4, "0")}`;
 }
 
 function calculateInvoice(items, discount = 0, taxPercent = 0) {
   let subTotal = 0;
-
   items.forEach(item => {
     item.total = Number(item.price) * Number(item.quantity);
     subTotal += item.total;
@@ -16,9 +18,7 @@ function calculateInvoice(items, discount = 0, taxPercent = 0) {
 
   const discountAmount = (subTotal * discount) / 100;
   const afterDiscount = subTotal - discountAmount;
-
   const taxAmount = (afterDiscount * taxPercent) / 100;
-
   const grandTotal = afterDiscount + taxAmount;
 
   return {
@@ -29,10 +29,6 @@ function calculateInvoice(items, discount = 0, taxPercent = 0) {
   };
 }
 
-
-// ------------------------------------
-// Amount in Words (Indian System)
-// ------------------------------------
 function numberToWords(num) {
   const a = [
     "", "One", "Two", "Three", "Four", "Five", "Six",
@@ -48,7 +44,6 @@ function numberToWords(num) {
     if ((num = num.toString()).length > 9) return "Overflow";
 
     let n = ("000000000" + num).substr(-9).match(/^(\d{2})(\d{2})(\d{2})(\d{1})(\d{2})$/);
-
     if (!n) return;
 
     let str = "";
@@ -56,63 +51,60 @@ function numberToWords(num) {
     str += n[2] != 0 ? (a[Number(n[2])] || b[n[2][0]] + " " + a[n[2][1]]) + " Lakh " : "";
     str += n[3] != 0 ? (a[Number(n[3])] || b[n[3][0]] + " " + a[n[3][1]]) + " Thousand " : "";
     str += n[4] != 0 ? (a[Number(n[4])] || b[n[4][0]] + " " + a[n[4][1]]) + " Hundred " : "";
-    str += n[5] != 0 ? ((str != "") ? "and " : "") +
-      (a[Number(n[5])] || b[n[5][0]] + " " + a[n[5][1]]) : "";
-
+    str += n[5] != 0 ? ((str != "") ? "and " : "") + (a[Number(n[5])] || b[n[5][0]] + " " + a[n[5][1]]) : "";
     return str.trim();
   }
 
   return inWords(Math.floor(num)) + " Rupees Only";
 }
 
-
-// ==========================
-// Get All Invoices
-// ==========================
-router.get("/", (req, res) => {
-  db.query("SELECT * FROM invoice", (err, result) => {
-    if (err) return res.status(500).json({ error: err });
-    res.json(result);
-  });
+// --------------------------
+// Get all invoices
+// --------------------------
+router.get("/", async (req, res) => {
+  try {
+    const [rows] = await db.promise().query("SELECT * FROM invoice");
+    res.json(rows);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
 });
 
-// ==========================
-// Get Single Invoice + Items
-// ==========================
-router.get("/:inv_no", (req, res) => {
-  const { inv_no } = req.params;
+// --------------------------
+// Get single invoice + items
+// --------------------------
+router.get("/:inv_no", async (req, res) => {
+  try {
+    const { inv_no } = req.params;
 
-  db.query("SELECT * FROM invoice WHERE inv_no=?", [inv_no], (err, invoice) => {
-    if (err) return res.status(500).json({ error: err });
-    if (!invoice.length) return res.status(404).json({ message: "Invoice not found" });
-
-    db.query(
-      "SELECT * FROM invoice_items WHERE invoice_id=?",
-      [invoice[0].id],
-      (err, items) => {
-        if (err) return res.status(500).json({ error: err });
-
-        res.json({
-          invoice: invoice[0],
-          items
-        });
-      }
+    const [invoiceRows] = await db.promise().query(
+      "SELECT * FROM invoice WHERE inv_no=?",
+      [inv_no]
     );
-  });
+    if (!invoiceRows.length) return res.status(404).json({ message: "Invoice not found" });
+
+    const [items] = await db.promise().query(
+      "SELECT * FROM invoice_items WHERE invoice_id=?",
+      [invoiceRows[0].id]
+    );
+
+    res.json({ invoice: invoiceRows[0], items });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
 });
 
-// ==========================
-// Create Invoice + Items
-// ==========================
-router.post("/", (req, res) => {
-  const invoice = req.body;
+// --------------------------
+// Create invoice + items
+// --------------------------
+router.post("/", async (req, res) => {
+  try {
+    const invoice = req.body;
 
-  db.query("SELECT COUNT(*) AS total FROM invoice", (err, result) => {
-    if (err) return res.status(500).json({ error: err });
+    // Count invoices to generate invoice number
+    const [[{ total }]] = await db.promise().query("SELECT COUNT(*) AS total FROM invoice");
+    const invNo = generateInvNo(total);
 
-    const invNo = generateInvNo(result[0].total);
-
-    // ---- Auto Calculation ----
     const calc = calculateInvoice(invoice.items, invoice.discount || 0, invoice.tax || 0);
 
     const sql = `
@@ -123,93 +115,72 @@ router.post("/", (req, res) => {
        terms_conditions, note)
       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
     `;
+    const [result] = await db.promise().query(sql, [
+      invNo,
+      invoice.bill_to,
+      invoice.ship_to,
+      invoice.company_name,
+      invoice.currency || "INR",
+      invoice.issue_date,
+      invoice.due_date,
+      invoice.payment_method,
+      calc.sub_total,
+      calc.tax,
+      calc.discount,
+      calc.total,
+      numberToWords(calc.total),
+      invoice.status || "Draft",
+      invoice.terms_conditions,
+      invoice.note
+    ]);
 
-    db.query(
-      sql,
-      [
-        invNo,
-        invoice.bill_to,
-        invoice.ship_to,
-        invoice.company_name,
-        invoice.currency || "INR",
-        invoice.issue_date,
-        invoice.due_date,
-        invoice.payment_method,
-        calc.sub_total,
-        calc.tax,
-        calc.discount,
-        calc.total,
-        numberToWords(calc.total),
-        invoice.status || "Draft",
-        invoice.terms_conditions,
-        invoice.note
-      ],
-      (err, result) => {
-        if (err) return res.status(500).json({ error: err });
+    const invoiceId = result.insertId;
+    const values = invoice.items.map(item => [invoiceId, item.name, item.quantity, item.price, item.total]);
 
-        const invoiceId = result.insertId;
-
-        const values = invoice.items.map(item => [
-          invoiceId,
-          item.name,
-          item.quantity,
-          item.price,
-          item.total
-        ]);
-
-        db.query(
-          "INSERT INTO invoice_items (invoice_id, name, quantity, price, total) VALUES ?",
-          [values],
-          err => {
-            if (err) return res.status(500).json({ error: err });
-
-            res.json({
-              message: "Invoice Created Successfully",
-              inv_no: invNo
-            });
-          }
-        );
-      }
+    await db.promise().query(
+      "INSERT INTO invoice_items (invoice_id, name, quantity, price, total) VALUES ?",
+      [values]
     );
-  });
+
+    res.status(201).json({ message: "Invoice Created Successfully", inv_no: invNo });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
 });
 
+// --------------------------
+// Update invoice
+// --------------------------
+router.put("/:inv_no", async (req, res) => {
+  try {
+    const { inv_no } = req.params;
+    const invoice = req.body;
 
-// ==========================
-// Update Invoice
-// ==========================
-router.put("/:inv_no", (req, res) => {
-  const { inv_no } = req.params;
-  const invoice = req.body;
+    const [result] = await db.promise().query(
+      "UPDATE invoice SET ? WHERE inv_no=?",
+      [invoice, inv_no]
+    );
 
-  db.query(
-    "UPDATE invoice SET ? WHERE inv_no=?",
-    [invoice, inv_no],
-    (err, result) => {
-      if (err) return res.status(500).json({ error: err });
-
-      if (!result.affectedRows)
-        return res.status(404).json({ message: "Invoice not found" });
-
-      res.json({ message: "Invoice Updated Successfully" });
-    }
-  );
+    if (!result.affectedRows) return res.status(404).json({ message: "Invoice not found" });
+    res.json({ message: "Invoice Updated Successfully" });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
 });
 
-// ==========================
-// Delete Invoice (cascade deletes items)
-// ==========================
-router.delete("/:inv_no", (req, res) => {
-  const { inv_no } = req.params;
+// --------------------------
+// Delete invoice
+// --------------------------
+router.delete("/:inv_no", async (req, res) => {
+  try {
+    const { inv_no } = req.params;
+    const [result] = await db.promise().query("DELETE FROM invoice WHERE inv_no=?", [inv_no]);
 
-  db.query("DELETE FROM invoice WHERE inv_no=?", [inv_no], (err, result) => {
-    if (err) return res.status(500).json({ error: err });
-
-    if (!result.affectedRows)
-      return res.status(404).json({ message: "Invoice not found" });
-
+    if (!result.affectedRows) return res.status(404).json({ message: "Invoice not found" });
     res.json({ message: "Invoice Deleted Successfully" });
-  });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
 });
 
 module.exports = router;
