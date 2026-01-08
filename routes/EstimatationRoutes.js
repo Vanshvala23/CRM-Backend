@@ -192,6 +192,7 @@ router.put('/:id', async (req, res) => {
 ================================ */
 router.patch('/:id/status', async (req, res) => {
   const allowed = ['Draft', 'Sent', 'Accepted', 'Rejected', 'Converted'];
+
   if (!allowed.includes(req.body.status)) {
     return res.status(400).json({ message: 'Invalid status' });
   }
@@ -205,7 +206,7 @@ router.patch('/:id/status', async (req, res) => {
 });
 
 /* ==============================
-   CONVERT TO INVOICE
+   CONVERT ESTIMATE → INVOICE
 ================================ */
 router.post('/:id/convert', async (req, res) => {
   const conn = await db.getConnection();
@@ -213,15 +214,16 @@ router.post('/:id/convert', async (req, res) => {
     await conn.beginTransaction();
 
     const [[estimate]] = await conn.query(
-      `SELECT e.*, c.name AS customer_name
+      `SELECT e.*,
+              CONCAT(c.first_name, ' ', c.last_name) AS customer_name
        FROM estimates e
-       JOIN contact c ON c.id=e.customer_id
+       JOIN contact c ON c.id = e.customer_id
        WHERE e.id=? AND e.status='Accepted'`,
       [req.params.id]
     );
 
     if (!estimate) {
-      return res.status(400).json({ message: 'Estimate not accepted' });
+      return res.status(400).json({ message: 'Estimate must be Accepted' });
     }
 
     const inv_no = await generateInvoiceNumber(conn);
@@ -277,9 +279,10 @@ router.post('/:id/convert', async (req, res) => {
 ================================ */
 router.get('/:id/pdf', async (req, res) => {
   const [[estimate]] = await db.query(
-    `SELECT e.*, c.name customer_name
+    `SELECT e.*,
+            CONCAT(c.first_name, ' ', c.last_name) AS customer_name
      FROM estimates e
-     JOIN contact c ON c.id=e.customer_id
+     JOIN contact c ON c.id = e.customer_id
      WHERE e.id=?`,
     [req.params.id]
   );
@@ -294,6 +297,7 @@ router.get('/:id/pdf', async (req, res) => {
   doc.pipe(res);
 
   doc.fontSize(20).text('ESTIMATE', { align: 'center' });
+  doc.moveDown();
   doc.text(`Estimate No: ${estimate.estimate_number}`);
   doc.text(`Customer: ${estimate.customer_name}`);
   doc.moveDown();
@@ -310,16 +314,21 @@ router.get('/:id/pdf', async (req, res) => {
 });
 
 /* ==============================
-   GET LIST
+   GET ESTIMATE LIST
 ================================ */
-router.get('/', async (_, res) => {
+router.get('/', async (req, res) => {
   const [rows] = await db.query(
-    `SELECT e.id, e.estimate_number, c.name customer_name,
-            e.issue_date, e.final_total, e.status
+    `SELECT e.id,
+            e.estimate_number,
+            CONCAT(c.first_name, ' ', c.last_name) AS customer_name,
+            e.issue_date,
+            e.final_total,
+            e.status
      FROM estimates e
-     JOIN contact c ON c.id=e.customer_id
+     JOIN contact c ON c.id = e.customer_id
      ORDER BY e.id DESC`
   );
+
   res.json(rows);
 });
 
