@@ -34,6 +34,8 @@ app.use("/api/tasks", require("./routes/tasksRoutes"));
 app.use("/api/users",require("./routes/userRoutes"));
 
 app.use("/api/tickets",require('./routes/ticketRoutes'));
+app.use("/api/departments",require('./routes/departmentsRoutes'));
+app.use("/api/services",require('./routes/servicesRoutes'));
 // Error handling middleware
 app.use((err, req, res, next) => {
     console.error(err.stack);
