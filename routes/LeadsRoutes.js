@@ -188,14 +188,7 @@ router.post("/:id/convert", async (req, res) => {
 
     // Mark lead as converted
     await db.query("UPDATE leads SET converted_to_customer=1 WHERE id=?", [leadId]);
-    const [existing]=await db.query("select id from contact where email=?",[lead.email]);
-    if(existing.length){
-      return res.status(400).json({message:"Customer already exists"});
-    }
-    res.json({
-      message: "Lead converted to customer successfully",
-      customer_id: customerResult.insertId
-    });
+    
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
