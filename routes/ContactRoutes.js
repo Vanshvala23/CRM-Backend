@@ -234,6 +234,7 @@ router.put("/:id", async (req, res) => {
 router.delete("/:id", async (req, res) => {
   try {
     await db.query("UPDATE contact SET deleted_at=NOW() WHERE id=?", [req.params.id]);
+    await db.query("delete from contact where id=?",[req.params.id]);
     await db.query(`alter table contact auto_increment =1`);
     res.json({ message: "Contact Deleted" });
   } catch (err) {
