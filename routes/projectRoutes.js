@@ -76,25 +76,21 @@ router.post("/", async (req, res) => {
 ================================ */
 router.get("/", async (req, res) => {
   try {
-    const [projects] = await db.query(`
+    const [rows] = await db.query(`
       SELECT 
         p.*,
-        CONCAT(c.first_name,' ',c.last_name) AS customer_name,
-        GROUP_CONCAT(u.name) AS members
+        CONCAT(c.first_name, ' ', c.last_name) AS customer_name
       FROM projects p
       LEFT JOIN contact c ON c.id = p.customer_id
-      LEFT JOIN project_members pm ON pm.project_id = p.id
-      LEFT JOIN users u ON u.id = pm.user_id
-      GROUP BY p.id
       ORDER BY p.id DESC
     `);
 
-    res.json(projects);
+    res.json(rows);
   } catch (err) {
-    console.error(err);
-    res.status(500).json({ message: "Server error" });
+    res.status(500).json({ error: err.message });
   }
 });
+
 
 /* ===============================
    GET SINGLE PROJECT
