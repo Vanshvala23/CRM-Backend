@@ -15,16 +15,24 @@ app.use(express.urlencoded({ extended: true }));
 app.use("/uploads", express.static(path.join(__dirname, "uploads")));
 
 // Routes
+//customer routes
 app.use("/api/contact", require('./routes/ContactRoutes'));
 app.use("/api/lead", require('./routes/LeadsRoutes'));
+
+//financial routes
 app.use("/api/invoice", require('./routes/InovoiceRoutes'));
 app.use("/api/proposal", require('./routes/ProposalRoutes'));
-app.use("/api/group", require("./routes/groupRoutes"));
-app.use("/api/tasks", require("./routes/tasksRoutes"));
-app.use("/api/users",require("./routes/userRoutes"));
 app.use("/api/estimate",require("./routes/EstimatationRoutes"));
 app.use("/api/creditnote",require("./routes/creditNoteRoutes"));
 app.use("/api/item",require('./routes/itemsRoutes'));
+
+app.use("/api/group", require("./routes/groupRoutes"));
+
+
+//tasks, support and ticket routes
+app.use("/api/tasks", require("./routes/tasksRoutes"));
+app.use("/api/users",require("./routes/userRoutes"));
+app.use("/api/tickets",require("./routes/ticketRoutes"));
 
 // Error handling middleware
 app.use((err, req, res, next) => {
