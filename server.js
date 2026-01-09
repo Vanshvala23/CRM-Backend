@@ -32,8 +32,8 @@ app.use("/api/group", require("./routes/groupRoutes"));
 //tasks, support and ticket routes
 app.use("/api/tasks", require("./routes/tasksRoutes"));
 app.use("/api/users",require("./routes/userRoutes"));
-app.use("/api/tickets",require("./routes/ticketRoutes"));
 
+app.use("/api/tickets",require('./routes/ticketRoutes'));
 // Error handling middleware
 app.use((err, req, res, next) => {
     console.error(err.stack);
