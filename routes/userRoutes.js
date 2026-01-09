@@ -7,7 +7,7 @@ const db = require("../config/db");
 ================================ */
 router.get("/", async (req, res) => {
   try {
-    const [users] = await db.promise().query(
+    const [users] = await db.query(
       "SELECT id, name FROM users ORDER BY name"
     );
     res.json(users);
