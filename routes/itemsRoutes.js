@@ -62,6 +62,7 @@ router.put('/:id', async (req, res) => {
 router.delete('/:id', async (req, res) => {
     try {
         const [result] = await db.query(`DELETE FROM items WHERE id=?`, [req.params.id]);
+        await db.query(`alter table items auto_increment =1`);
         if (!result.affectedRows) return res.status(404).json({ message: 'Item not found' });
         res.json({ message: 'Item deleted' });
     } catch (err) {

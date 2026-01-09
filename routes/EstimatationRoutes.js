@@ -312,9 +312,10 @@ router.delete('/:id', async (req, res) => {
 
         // Delete items first
         await conn.query(`DELETE FROM estimate_items WHERE estimate_id=?`, [id]);
-
+        await db.query(`alter table estimate_items auto_increment =1`);
         // Delete estimate
         const [result] = await conn.query(`DELETE FROM estimates WHERE id=?`, [id]);
+        await db.query(`alter table estimates auto_increment =1`);
         if (!result.affectedRows) {
             await conn.rollback();
             return res.status(404).json({ message: 'Estimate not found' });

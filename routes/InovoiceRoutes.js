@@ -175,7 +175,7 @@ router.delete("/:inv_no", async (req, res) => {
   try {
     const { inv_no } = req.params;
     const [result] = await db.query("DELETE FROM invoice WHERE inv_no=?", [inv_no]);
-
+    await db.query(`alter table invoice auto_increment =1`);
     if (!result.affectedRows) return res.status(404).json({ message: "Invoice not found" });
     res.json({ message: "Invoice Deleted Successfully" });
   } catch (err) {

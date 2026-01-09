@@ -25,7 +25,7 @@ async function getRelatedCode(type) {
   if (!map[type]) return null;
 
   const { table, column } = map[type];
-  const [rows] = await db.promise().query(
+  const [rows] = await db.query(
     `SELECT ${column} FROM ${table} ORDER BY id DESC LIMIT 1`
   );
 
@@ -38,7 +38,7 @@ async function getRelatedCode(type) {
 async function bulkInsert(table, taskId, users = []) {
   if (!users.length) return;
   const values = users.map(u => [taskId, u]);
-  await db.promise().query(
+  await db.query(
     `INSERT INTO ${table} (task_id, user_id) VALUES ?`,
     [values]
   );
@@ -78,7 +78,7 @@ router.post("/", async (req, res) => {
       ? await getRelatedCode(related_type)
       : null;
 
-    const [result] = await db.promise().query(
+    const [result] = await db.query(
       `INSERT INTO tasks
        (subject,hourly_rate,start_date,due_date,priority,description,
         related_type,related_id,repeat_every,repeat_unit,total_cycles,is_infinite,
@@ -108,7 +108,7 @@ router.post("/", async (req, res) => {
     await bulkInsert("task_followers", taskId, followers);
 
     /* FETCH FULL TASK WITH NAMES */
-    const [[task]] = await db.promise().query(`
+    const [[task]] = await db.query(`
       SELECT 
         t.*,
         GROUP_CONCAT(DISTINCT ua.name SEPARATOR ', ') AS assignees,
@@ -138,7 +138,7 @@ router.post("/", async (req, res) => {
 ================================ */
 router.get("/", async (req, res) => {
   try {
-    const [rows] = await db.promise().query(`
+    const [rows] = await db.query(`
       SELECT 
         t.*,
 
@@ -167,7 +167,7 @@ router.get("/", async (req, res) => {
 ================================ */
 router.get("/:id", async (req, res) => {
   try {
-    const [rows] = await db.promise().query(`
+    const [rows] = await db.query(`
       SELECT 
         t.*,
         GROUP_CONCAT(DISTINCT ua.name SEPARATOR ', ') AS assignees,
@@ -222,7 +222,7 @@ router.put("/:id", async (req, res) => {
       WHERE id=?
     `;
 
-    await db.promise().query(sql, [...Object.values(updates), req.params.id]);
+    await db.query(sql, [...Object.values(updates), req.params.id]);
 
     res.json({ message: "Task updated" });
   } catch (err) {
@@ -235,9 +235,10 @@ router.put("/:id", async (req, res) => {
 ================================ */
 router.delete("/:id", async (req, res) => {
   try {
-    await db.promise().query("DELETE FROM task_assignees WHERE task_id=?", [req.params.id]);
-    await db.promise().query("DELETE FROM task_followers WHERE task_id=?", [req.params.id]);
-    await db.promise().query("DELETE FROM tasks WHERE id=?", [req.params.id]);
+    await db.query("DELETE FROM task_assignees WHERE task_id=?", [req.params.id]);
+    await db.query("DELETE FROM task_followers WHERE task_id=?", [req.params.id]);
+    await db.query("DELETE FROM tasks WHERE id=?", [req.params.id]);
+    await db.query(`alter table tasks auto_increment =1`);
     res.json({ message: "Task deleted" });
   } catch (err) {
     res.status(500).json(err);
@@ -261,7 +262,7 @@ router.post("/import", upload.single("file"), async (req, res) => {
           ? await getRelatedCode(r.related_type)
           : null;
 
-        await db.promise().query(
+        await db.query(
           `INSERT INTO tasks
            (subject,start_date,priority,related_type,related_id)
            VALUES (?,?,?,?,?)`,

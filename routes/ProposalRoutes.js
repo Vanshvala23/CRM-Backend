@@ -150,6 +150,7 @@ router.delete("/:prop_id", async (req, res) => {
 
     // Delete proposal
     const [result] = await conn.query("DELETE FROM proposal WHERE prop_id=?", [req.params.prop_id]);
+    await db.query(`alter table proposal auto_increment =1`);
     if (!result.affectedRows) {
       await conn.rollback();
       return res.status(404).json({ message: "Proposal not found" });
