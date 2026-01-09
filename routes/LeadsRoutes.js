@@ -51,6 +51,8 @@ router.get("/:id", async (req, res) => {
   }
 });
 
+
+
 /* =========================
    CREATE LEAD
 ========================= */
@@ -148,5 +150,53 @@ router.delete("/:id", async (req, res) => {
     res.status(500).json({ error: err.message });
   }
 });
+
+/* =========================
+   CONVERT LEAD TO CUSTOMER
+========================= */
+router.post("/:id/convert", async (req, res) => {
+  try {
+    const leadId = req.params.id;
+
+    // Fetch the lead
+    const [leadRows] = await db.query("SELECT * FROM leads WHERE id=?", [leadId]);
+    if (!leadRows.length) return res.status(404).json({ message: "Lead not found" });
+
+    const lead = leadRows[0];
+
+    // Insert into contact table
+    const [customerResult] = await db.query(
+      `INSERT INTO contact
+        (first_name, last_name, position, email, company, phone, website, address, city, state, country, zipcode, lead_id)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        lead.first_name,
+        lead.last_name,
+        lead.position,
+        lead.email,
+        lead.company,
+        lead.phone,
+        lead.website,
+        lead.address,
+        lead.city,
+        lead.state,
+        lead.country,
+        lead.zipcode,
+        leadId
+      ]
+    );
+
+    // Mark lead as converted
+    await db.query("UPDATE leads SET converted_to_customer=1 WHERE id=?", [leadId]);
+
+    res.json({
+      message: "Lead converted to customer successfully",
+      customer_id: customerResult.insertId
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 
 module.exports = router;
