@@ -79,7 +79,7 @@ router.get("/", async (req, res) => {
         CONCAT(c.first_name,' ',c.last_name) AS customer_name,
         GROUP_CONCAT(u.name) AS members
       FROM projects p
-      LEFT JOIN contacts c ON c.id = p.customer_id
+      LEFT JOIN contact c ON c.id = p.customer_id
       LEFT JOIN project_members pm ON pm.project_id = p.id
       LEFT JOIN users u ON u.id = pm.user_id
       GROUP BY p.id
