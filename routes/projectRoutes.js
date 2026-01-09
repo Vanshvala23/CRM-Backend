@@ -23,6 +23,9 @@ router.post("/", async (req, res) => {
     } = req.body;
 
     await connection.beginTransaction();
+    const safeCustomerId =
+  customer_id && !isNaN(customer_id) ? customer_id : null;
+
 
     const [projectResult] = await connection.query(
       `INSERT INTO projects
@@ -30,7 +33,7 @@ router.post("/", async (req, res) => {
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         name,
-        customer_id || null,
+        safeCustomerId,
         bill_type || "Project hours",
         status || "Not started",
         rate_per_hour || null,
@@ -205,7 +208,7 @@ router.put("/:id", async (req, res) => {
 router.delete("/:id", async (req, res) => {
   try {
     await db.query(`DELETE FROM projects WHERE id=?`, [req.params.id]);
-    await db.query('alter table projects auto_increment=1');
+    // await db.query('alter table projects auto_increment=1');
     res.json({ success: true, message: "Project deleted successfully" });
   } catch (err) {
     console.error(err);
