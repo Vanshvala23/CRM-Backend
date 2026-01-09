@@ -57,17 +57,18 @@ router.get("/:id", async (req, res) => {
 router.post("/", async (req, res) => {
   try {
     const { name, ...rest } = req.body;
+
     if (!name) return res.status(400).json({ message: "Name is required" });
 
+    // Split the name field into first_name and last_name
     const { first_name, last_name } = splitName(name);
 
-    // Build insert object
     const data = {
       first_name,
       last_name,
       status: rest.status || "New",
       source: rest.source || null,
-      assigned_to: rest.assigned_to || null,
+      assigned_to: rest.assigned_to || null, // frontend sends string like "Admin"
       tags: rest.tags || null,
       position: rest.position || null,
       email: rest.email || null,
@@ -95,6 +96,7 @@ router.post("/", async (req, res) => {
     res.status(500).json({ error: err.message });
   }
 });
+
 
 /* =========================
    UPDATE LEAD
@@ -140,7 +142,7 @@ router.delete("/:id", async (req, res) => {
   try {
     await db.query("UPDATE leads SET deleted_at=NOW() WHERE id=?", [req.params.id]);
     await db.query("delete from leads where id=?",[req.params.id]);
-    await db.query("alter table leads auto_increment=1");
+    await db.query("alter table leads auto_increment=1")
     res.json({ message: "Lead deleted" });
   } catch (err) {
     res.status(500).json({ error: err.message });
