@@ -2,7 +2,7 @@ const express = require("express");
 const router = express.Router();
 const Project = require("../models/Project");
 const User = require("../models/User");       // your users collection
-const Customer = require("../models/Customer"); // your customers collection
+const Customer = require("../models/COntact"); // your customers collection
 
 /* ===============================
    CREATE PROJECT + MEMBERS
