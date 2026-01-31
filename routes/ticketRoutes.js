@@ -1,75 +1,78 @@
-const express = require('express');
+const express = require("express");
 const router = express.Router();
-const db=require('../config/db');
+const Ticket = require("../models/Ticket");
+const Contact = require("../models/COntact");
+const Department = require("../models/Department");
+const Service = require("../models/Service");
+const User = require("../models/User");
 
+// ==============================
+// CREATE TICKET
+// ==============================
+router.post("/", async (req, res) => {
+  try {
+    const {
+      ticket_type, subject, contact_id, name, email,
+      department_id, service_id, assigned_to, priority, cc
+    } = req.body;
 
-/*==> ticket creation<==*/
+    if (!ticket_type || !subject || !department_id || !service_id || !assigned_to) {
+      return res.status(400).json({ message: "Required fields missing" });
+    }
 
-router.post("/",async(req,res)=>
-{
-    try {
-        const{ticket_type,subject,contact_id, name, email, department_id, service_id,assigned_to,priority,cc}=req.body;
-
-        if(!ticket_type || !subject || !department_id || !service_id || !assigned_to){
-            return res.status(400).json({message:"Required fields missing"});
-        }
-        let finalContactId = null;
+    let contact = null;
     let finalName = null;
     let finalEmail = null;
 
     if (ticket_type === "with_contact") {
-      if (!contact_id) {
-        return res.status(400).json({ message: "Contact is required" });
-      }
-      finalContactId = contact_id;
+      if (!contact_id) return res.status(400).json({ message: "Contact is required" });
+      contact = contact_id;
     } else {
-      if (!name || !email) {
-        return res.status(400).json({ message: "Name and Email are required" });
-      }
+      if (!name || !email) return res.status(400).json({ message: "Name and Email are required" });
       finalName = name;
       finalEmail = email;
     }
 
-    const[result]=await db.query(`INSERT INTO tickets
-      (ticket_type, subject, contact_id, name, email, department_id, service_id, assigned_to, priority, cc)
-      VALUES (?,?,?,?,?,?,?,?,?,?)`,[
-        ticket_type,
-        subject,
-        finalContactId,
-        finalName,
-        finalEmail,
-        department_id,
-        service_id,
-        assigned_to,
-        priority || "medium",
-        cc || null
-      ]);
-      res.status(200).json({
-        message: "Ticket created successfully",
-      ticket_id: result.insertId
-      });
-    } catch (error) {
-        console.error(error)
-        res.status(500).json({message:"Server error"})
-    }
+    const ticket = new Ticket({
+      ticket_type,
+      subject,
+      contact,
+      name: finalName,
+      email: finalEmail,
+      department: department_id,
+      service: service_id,
+      assigned_to,
+      priority: priority || "medium",
+      cc: cc || null
+    });
+
+    await ticket.save();
+
+    const populated = await ticket
+      .populate("contact", "first_name last_name email")
+      .populate("department", "name")
+      .populate("service", "name")
+      .populate("assigned_to", "name");
+
+    res.status(201).json(populated);
+
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ message: "Server error" });
+  }
 });
+
+// ==============================
+// GET ALL TICKETS
+// ==============================
 router.get("/", async (req, res) => {
   try {
-    const [tickets] = await db.query(`
-      SELECT 
-        t.*,
-        CONCAT(c.first_name,' ',c.last_name) AS contact_name,
-        c.email AS contact_email,
-        d.name AS department_name,
-        s.name AS service_name,
-        u.name AS assigned_user
-      FROM tickets t
-      LEFT JOIN contact c ON c.id = t.contact_id
-      JOIN departments d ON d.id = t.department_id
-      JOIN services s ON s.id = t.service_id
-      JOIN users u ON u.id = t.assigned_to
-      ORDER BY t.created_at DESC
-    `);
+    const tickets = await Ticket.find()
+      .populate("contact", "first_name last_name email")
+      .populate("department", "name")
+      .populate("service", "name")
+      .populate("assigned_to", "name")
+      .sort({ createdAt: -1 });
 
     res.json(tickets);
   } catch (err) {
@@ -77,71 +80,57 @@ router.get("/", async (req, res) => {
   }
 });
 
+// ==============================
+// GET SINGLE TICKET
+// ==============================
 router.get("/:id", async (req, res) => {
   try {
-    const [rows] = await db.query(
-      `SELECT * FROM tickets WHERE id=?`,
-      [req.params.id]
-    );
+    const ticket = await Ticket.findById(req.params.id)
+      .populate("contact", "first_name last_name email")
+      .populate("department", "name")
+      .populate("service", "name")
+      .populate("assigned_to", "name");
 
-    if (!rows.length) {
-      return res.status(404).json({ message: "Ticket not found" });
-    }
+    if (!ticket) return res.status(404).json({ message: "Ticket not found" });
 
-    res.json(rows[0]);
+    res.json(ticket);
   } catch (err) {
     res.status(500).json({ message: "Server error" });
   }
 });
 
+// ==============================
+// UPDATE TICKET
+// ==============================
 router.put("/:id", async (req, res) => {
   try {
-    const {
-      subject,
-      department_id,
-      service_id,
-      assigned_to,
-      priority,
-      status,
-      cc
-    } = req.body;
+    const updates = { ...req.body };
+    const ticket = await Ticket.findByIdAndUpdate(req.params.id, updates, { new: true })
+      .populate("contact", "first_name last_name email")
+      .populate("department", "name")
+      .populate("service", "name")
+      .populate("assigned_to", "name");
 
-    await db.query(
-      `UPDATE tickets SET
-        subject=?,
-        department_id=?,
-        service_id=?,
-        assigned_to=?,
-        priority=?,
-        status=?,
-        cc=?
-      WHERE id=?`,
-      [
-        subject,
-        department_id,
-        service_id,
-        assigned_to,
-        priority,
-        status,
-        cc,
-        req.params.id
-      ]
-    );
+    if (!ticket) return res.status(404).json({ message: "Ticket not found" });
 
-    res.json({ message: "Ticket updated" });
+    res.json(ticket);
   } catch (err) {
     res.status(500).json({ message: "Server error" });
   }
 });
 
+// ==============================
+// DELETE TICKET
+// ==============================
 router.delete("/:id", async (req, res) => {
   try {
-    await db.query(`DELETE FROM tickets WHERE id=?`, [req.params.id]);
-    await db.query(`alter table tickets auto_increment =1`);
+    const ticket = await Ticket.findByIdAndDelete(req.params.id);
+    if (!ticket) return res.status(404).json({ message: "Ticket not found" });
+
     res.json({ message: "Ticket deleted" });
   } catch (err) {
     res.status(500).json({ message: "Server error" });
   }
 });
 
-module.exports =router;
+module.exports = router;

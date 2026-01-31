@@ -1,38 +1,51 @@
 const express = require("express");
 const router = express.Router();
-const db = require("../config/db");
+const CustomerGroup = require("../models/CustomerGroup");
+const Customer = require("../models/COntact"); // or Customer model name
 
-// Get all groups
+/* ================= GET ALL GROUPS ================= */
 router.get("/", async (req, res) => {
   try {
-    const [groups] = await db.query("SELECT * FROM customer_groups");
+    const groups = await CustomerGroup.find().sort({ createdAt: -1 });
     res.json(groups);
   } catch (err) {
     res.status(500).json({ message: err.message });
   }
 });
 
-// Create new group
+/* ================= CREATE GROUP ================= */
 router.post("/", async (req, res) => {
   try {
     const { name } = req.body;
-    const [result] = await db.query("INSERT INTO customer_groups (name) VALUES (?)", [name]);
-    res.status(201).json({ id: result.insertId, name });
+    if (!name) return res.status(400).json({ message: "Name required" });
+
+    const group = await CustomerGroup.create({ name });
+    res.status(201).json(group);
+
   } catch (err) {
-    if (err.code === "ER_DUP_ENTRY") return res.status(409).json({ message: "Group already exists" });
+    if (err.code === 11000) {
+      return res.status(409).json({ message: "Group already exists" });
+    }
     res.status(500).json({ message: err.message });
   }
 });
 
-// Assign groups to customer
+/* ================= ASSIGN GROUPS TO CUSTOMER ================= */
 router.post("/assign", async (req, res) => {
   try {
     const { customer_id, group_ids } = req.body;
-    if (!customer_id || !group_ids?.length) return res.status(400).json({ message: "Invalid data" });
+    if (!customer_id || !group_ids?.length) {
+      return res.status(400).json({ message: "Invalid data" });
+    }
 
-    const values = group_ids.map(gid => [customer_id, gid]);
-    await db.query("INSERT IGNORE INTO customer_group_map (customer_id, group_id) VALUES ?", [values]);
+    await Customer.findByIdAndUpdate(
+      customer_id,
+      { $addToSet: { groups: { $each: group_ids } } }, // prevents duplicates
+      { new: true }
+    );
+
     res.json({ message: "Group(s) assigned successfully" });
+
   } catch (err) {
     res.status(500).json({ message: err.message });
   }

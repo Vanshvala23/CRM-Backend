@@ -1,253 +1,133 @@
 const express = require("express");
 const router = express.Router();
-const db = require("../config/db");
+const Task = require("../models/Task");
+const User = require("../models/User");
 const multer = require("multer");
 const fs = require("fs");
 const csv = require("csv-parser");
 
-/* ===============================
-   MULTER CONFIG
-================================ */
 const upload = multer({ dest: "uploads/tasks/" });
 
-/* ===============================
-   AUTO FETCH RELATED CODE
-================================ */
+// ===============================
+// AUTO FETCH RELATED CODE
+// ===============================
 async function getRelatedCode(type) {
   const map = {
-    invoice:  { table: "invoice", column: "inv_no" },
-    estimate: { table: "estimates", column: "estimate_no" },
-    proposal: { table: "proposal", column: "prop_id" },
-    customer: { table: "contact", column: "customer_code" },
-    lead:     { table: "leads", column: "lead_code" }
+    invoice:  "inv_no",
+    estimate: "estimate_no",
+    proposal: "prop_id",
+    customer: "customer_code",
+    lead:     "lead_code"
   };
 
   if (!map[type]) return null;
 
-  const { table, column } = map[type];
-  const [rows] = await db.query(
-    `SELECT ${column} FROM ${table} ORDER BY id DESC LIMIT 1`
-  );
-
-  return rows.length ? rows[0][column] : null;
+  const Model = require(`../models/${type.charAt(0).toUpperCase() + type.slice(1)}`);
+  const lastDoc = await Model.findOne().sort({ _id: -1 }).select(map[type]);
+  return lastDoc ? lastDoc[map[type]] : null;
 }
 
-/* ===============================
-   BULK INSERT (ASSIGNEES / FOLLOWERS)
-================================ */
-async function bulkInsert(table, taskId, users = []) {
-  if (!users.length) return;
-  const values = users.map(u => [taskId, u]);
-  await db.query(
-    `INSERT INTO ${table} (task_id, user_id) VALUES ?`,
-    [values]
-  );
-}
-
-/* ===============================
-   CREATE TASK (AUTO RELATED ID)
-================================ */
-/* ===============================
-   CREATE TASK (RETURN FULL DATA)
-================================ */
+// ===============================
+// CREATE TASK
+// ===============================
 router.post("/", async (req, res) => {
   try {
     const {
-      subject,
-      hourly_rate,
-      start_date,
-      due_date,
-      priority,
-      description,
-      related_type,
-      repeat_every,
-      repeat_unit,
-      total_cycles,
-      is_infinite,
-      is_public,
-      is_billable,
-      assignees = [],
-      followers = []
+      subject, hourly_rate, start_date, due_date, priority, description,
+      related_type, repeat_every, repeat_unit, total_cycles, is_infinite,
+      is_public, is_billable, assignees = [], followers = []
     } = req.body;
 
-    if (!subject || !start_date) {
-      return res.status(400).json({ message: "Subject & Start Date required" });
-    }
+    if (!subject || !start_date) return res.status(400).json({ message: "Subject & Start Date required" });
 
-    const related_id = related_type
-      ? await getRelatedCode(related_type)
-      : null;
+    const related_id = related_type ? await getRelatedCode(related_type) : null;
 
-    const [result] = await db.query(
-      `INSERT INTO tasks
-       (subject,hourly_rate,start_date,due_date,priority,description,
-        related_type,related_id,repeat_every,repeat_unit,total_cycles,is_infinite,
-        is_public,is_billable)
-       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
-      [
-        subject,
-        hourly_rate || 0,
-        start_date,
-        due_date || null,
-        priority || "Low",
-        description || null,
-        related_type || null,
-        related_id,
-        repeat_every || 0,
-        repeat_unit || null,
-        total_cycles || 0,
-        is_infinite || 0,
-        is_public ?? 1,
-        is_billable ?? 0
-      ]
-    );
-
-    const taskId = result.insertId;
-
-    await bulkInsert("task_assignees", taskId, assignees);
-    await bulkInsert("task_followers", taskId, followers);
-
-    /* FETCH FULL TASK WITH NAMES */
-    const [[task]] = await db.query(`
-      SELECT 
-        t.*,
-        GROUP_CONCAT(DISTINCT ua.name SEPARATOR ', ') AS assignees,
-        GROUP_CONCAT(DISTINCT uf.name SEPARATOR ', ') AS followers
-      FROM tasks t
-      LEFT JOIN task_assignees ta ON ta.task_id = t.id
-      LEFT JOIN users ua ON ua.id = ta.user_id
-      LEFT JOIN task_followers tf ON tf.task_id = t.id
-      LEFT JOIN users uf ON uf.id = tf.user_id
-      WHERE t.id = ?
-      GROUP BY t.id
-    `, [taskId]);
-
-    res.status(201).json(task);
-
-  } catch (err) {
-    res.status(500).json(err);
-  }
-});
-
-
-/* ===============================
-   GET ALL TASKS
-================================ */
-/* ===============================
-   GET ALL TASKS (WITH USER NAMES)
-================================ */
-router.get("/", async (req, res) => {
-  try {
-    const [rows] = await db.query(`
-      SELECT 
-        t.*,
-
-        GROUP_CONCAT(DISTINCT ua.name SEPARATOR ', ') AS assignees,
-        GROUP_CONCAT(DISTINCT uf.name SEPARATOR ', ') AS followers
-
-      FROM tasks t
-
-      LEFT JOIN task_assignees ta ON ta.task_id = t.id
-      LEFT JOIN users ua ON ua.id = ta.user_id
-
-      LEFT JOIN task_followers tf ON tf.task_id = t.id
-      LEFT JOIN users uf ON uf.id = tf.user_id
-
-      GROUP BY t.id
-      ORDER BY t.created_at DESC
-    `);
-
-    res.json(rows);
-  } catch (err) {
-    res.status(500).json(err);
-  }
-});
-/* ===============================
-   GET SINGLE TASK (FULL + NAMES)
-================================ */
-router.get("/:id", async (req, res) => {
-  try {
-    const [rows] = await db.query(`
-      SELECT 
-        t.*,
-        GROUP_CONCAT(DISTINCT ua.name SEPARATOR ', ') AS assignees,
-        GROUP_CONCAT(DISTINCT uf.name SEPARATOR ', ') AS followers
-      FROM tasks t
-      LEFT JOIN task_assignees ta ON ta.task_id = t.id
-      LEFT JOIN users ua ON ua.id = ta.user_id
-      LEFT JOIN task_followers tf ON tf.task_id = t.id
-      LEFT JOIN users uf ON uf.id = tf.user_id
-      WHERE t.id = ?
-      GROUP BY t.id
-    `, [req.params.id]);
-
-    if (!rows.length) {
-      return res.status(404).json({ message: "Task not found" });
-    }
-
-    res.json(rows[0]);
-  } catch (err) {
-    res.status(500).json(err);
-  }
-});
-
-
-
-/* ===============================
-   UPDATE TASK
-================================ */
-router.put("/:id", async (req, res) => {
-  try {
-    const fields = [
-      "subject","hourly_rate","start_date","due_date","priority","description",
-      "related_type","repeat_every","repeat_unit","total_cycles","is_infinite",
-      "is_public","is_billable"
-    ];
-
-    const updates = {};
-    fields.forEach(f => {
-      if (req.body[f] !== undefined) updates[f] = req.body[f];
+    const task = new Task({
+      subject, hourly_rate, start_date, due_date, priority, description,
+      related_type, related_id, repeat_every, repeat_unit, total_cycles,
+      is_infinite, is_public, is_billable,
+      assignees, followers
     });
 
-    if (!Object.keys(updates).length) {
-      return res.status(400).json({ message: "Nothing to update" });
-    }
+    await task.save();
+    const populated = await task.populate("assignees followers", "name");
+
+    res.status(201).json(populated);
+  } catch (err) {
+    res.status(500).json({ message: err.message });
+  }
+});
+
+// ===============================
+// GET ALL TASKS
+// ===============================
+router.get("/", async (req, res) => {
+  try {
+    const tasks = await Task.find()
+      .populate("assignees followers", "name")
+      .sort({ createdAt: -1 });
+
+    res.json(tasks);
+  } catch (err) {
+    res.status(500).json({ message: err.message });
+  }
+});
+
+// ===============================
+// GET SINGLE TASK
+// ===============================
+router.get("/:id", async (req, res) => {
+  try {
+    const task = await Task.findById(req.params.id)
+      .populate("assignees followers", "name");
+
+    if (!task) return res.status(404).json({ message: "Task not found" });
+
+    res.json(task);
+  } catch (err) {
+    res.status(500).json({ message: err.message });
+  }
+});
+
+// ===============================
+// UPDATE TASK
+// ===============================
+router.put("/:id", async (req, res) => {
+  try {
+    const updates = { ...req.body };
 
     if (updates.related_type) {
       updates.related_id = await getRelatedCode(updates.related_type);
     }
 
-    const sql = `
-      UPDATE tasks SET ${Object.keys(updates).map(k => `${k}=?`).join(", ")}
-      WHERE id=?
-    `;
+    const task = await Task.findByIdAndUpdate(req.params.id, updates, { new: true })
+      .populate("assignees followers", "name");
 
-    await db.query(sql, [...Object.values(updates), req.params.id]);
+    if (!task) return res.status(404).json({ message: "Task not found" });
 
-    res.json({ message: "Task updated" });
+    res.json(task);
   } catch (err) {
-    res.status(500).json(err);
+    res.status(500).json({ message: err.message });
   }
 });
 
-/* ===============================
-   DELETE TASK
-================================ */
+// ===============================
+// DELETE TASK
+// ===============================
 router.delete("/:id", async (req, res) => {
   try {
-    await db.query("DELETE FROM task_assignees WHERE task_id=?", [req.params.id]);
-    await db.query("DELETE FROM task_followers WHERE task_id=?", [req.params.id]);
-    await db.query("DELETE FROM tasks WHERE id=?", [req.params.id]);
-    await db.query(`alter table tasks auto_increment =1`);
+    const task = await Task.findByIdAndDelete(req.params.id);
+    if (!task) return res.status(404).json({ message: "Task not found" });
+
     res.json({ message: "Task deleted" });
   } catch (err) {
-    res.status(500).json(err);
+    res.status(500).json({ message: err.message });
   }
 });
 
-/* ===============================
-   IMPORT TASKS (CSV)
-================================ */
+// ===============================
+// IMPORT TASKS FROM CSV
+// ===============================
 router.post("/import", upload.single("file"), async (req, res) => {
   if (!req.file) return res.status(400).json({ message: "CSV file required" });
 
@@ -257,27 +137,26 @@ router.post("/import", upload.single("file"), async (req, res) => {
     .pipe(csv())
     .on("data", row => rows.push(row))
     .on("end", async () => {
-      for (const r of rows) {
-        const related_id = r.related_type
-          ? await getRelatedCode(r.related_type)
-          : null;
+      try {
+        for (const r of rows) {
+          const related_id = r.related_type ? await getRelatedCode(r.related_type) : null;
 
-        await db.query(
-          `INSERT INTO tasks
-           (subject,start_date,priority,related_type,related_id)
-           VALUES (?,?,?,?,?)`,
-          [
-            r.subject,
-            r.start_date,
-            r.priority || "Low",
-            r.related_type || null,
+          const task = new Task({
+            subject: r.subject,
+            start_date: r.start_date,
+            priority: r.priority || "Low",
+            related_type: r.related_type || null,
             related_id
-          ]
-        );
-      }
+          });
 
-      fs.unlinkSync(req.file.path);
-      res.json({ message: "Tasks imported", count: rows.length });
+          await task.save();
+        }
+
+        fs.unlinkSync(req.file.path);
+        res.json({ message: "Tasks imported", count: rows.length });
+      } catch (err) {
+        res.status(500).json({ message: err.message });
+      }
     });
 });
 

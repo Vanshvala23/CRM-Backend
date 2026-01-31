@@ -1,26 +1,36 @@
 const express = require("express");
 const router = express.Router();
-const db = require("../config/db");
+const Department = require("../models/Department");
 
-// Get all departments
+/* ======================
+   GET ALL DEPARTMENTS
+====================== */
 router.get("/", async (req, res) => {
   try {
-    const [rows] = await db.query("SELECT * FROM departments");
+    const rows = await Department.find().sort({ createdAt: -1 });
     res.json(rows);
   } catch (err) {
     res.status(500).json({ message: "Server error" });
   }
 });
 
-// Create department
+/* ======================
+   CREATE DEPARTMENT
+====================== */
 router.post("/", async (req, res) => {
   try {
     const { name } = req.body;
-    if (!name) return res.status(400).json({ message: "Name required" });
 
-    await db.query("INSERT INTO departments (name) VALUES (?)", [name]);
+    if (!name)
+      return res.status(400).json({ message: "Name required" });
+
+    await Department.create({ name });
+
     res.json({ message: "Department created" });
   } catch (err) {
+    if (err.code === 11000)
+      return res.status(409).json({ message: "Department already exists" });
+
     res.status(500).json({ message: "Server error" });
   }
 });

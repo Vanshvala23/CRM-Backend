@@ -1,27 +1,29 @@
 const express = require("express");
 const router = express.Router();
-const db = require("../config/db");
+const Service = require("../models/Service");
 
 // Get all services
 router.get("/", async (req, res) => {
   try {
-    const [rows] = await db.query("SELECT * FROM services");
-    res.json(rows);
+    const services = await Service.find().sort({ name: 1 }); // sorted alphabetically
+    res.json(services);
   } catch (err) {
-    res.status(500).json({ message: "Server error" });
+    res.status(500).json({ message: "Server error", error: err.message });
   }
 });
 
-// Create service
+// Create a service
 router.post("/", async (req, res) => {
   try {
     const { name } = req.body;
     if (!name) return res.status(400).json({ message: "Name required" });
 
-    await db.query("INSERT INTO services (name) VALUES (?)", [name]);
-    res.json({ message: "Service created" });
+    const service = new Service({ name });
+    await service.save();
+
+    res.status(201).json({ message: "Service created", id: service._id });
   } catch (err) {
-    res.status(500).json({ message: "Server error" });
+    res.status(500).json({ message: "Server error", error: err.message });
   }
 });
 

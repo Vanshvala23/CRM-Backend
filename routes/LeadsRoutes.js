@@ -1,12 +1,7 @@
 const express = require("express");
 const router = express.Router();
-const db = require("../config/db");
-const multer = require("multer");
-const fs = require("fs");
-const csv = require("csv-parser");
-
-// Multer config for CSV uploads
-const upload = multer({ dest: "uploads/" });
+const Lead = require("../models/Lead");
+const Customer = require("../models/COntact"); // create this for converted leads
 
 /* =========================
    NAME HELPERS
@@ -29,9 +24,9 @@ function joinName(first_name, last_name) {
 ========================= */
 router.get("/", async (req, res) => {
   try {
-    const [rows] = await db.query("SELECT * FROM leads ORDER BY created_at DESC");
-    const leads = rows.map(l => ({ ...l, name: joinName(l.first_name, l.last_name) }));
-    res.json(leads);
+    const leads = await Lead.find({ deleted_at: null }).sort({ createdAt: -1 });
+    const formatted = leads.map(l => ({ ...l.toObject(), name: joinName(l.first_name, l.last_name) }));
+    res.json(formatted);
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -42,16 +37,14 @@ router.get("/", async (req, res) => {
 ========================= */
 router.get("/:id", async (req, res) => {
   try {
-    const [rows] = await db.query("SELECT * FROM leads WHERE id=?", [req.params.id]);
-    if (!rows.length) return res.status(404).json({ message: "Lead not found" });
-    const lead = { ...rows[0], name: joinName(rows[0].first_name, rows[0].last_name) };
-    res.json(lead);
+    const lead = await Lead.findById(req.params.id);
+    if (!lead || lead.deleted_at) return res.status(404).json({ message: "Lead not found" });
+
+    res.json({ ...lead.toObject(), name: joinName(lead.first_name, lead.last_name) });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
 });
-
-
 
 /* =========================
    CREATE LEAD
@@ -59,19 +52,17 @@ router.get("/:id", async (req, res) => {
 router.post("/", async (req, res) => {
   try {
     const { name, ...rest } = req.body;
-
     if (!name) return res.status(400).json({ message: "Name is required" });
 
-    // Split the name field into first_name and last_name
     const { first_name, last_name } = splitName(name);
 
-    const data = {
+    const lead = await Lead.create({
       first_name,
       last_name,
       status: rest.status || "New",
       source: rest.source || null,
-      assigned_to: rest.assigned_to || null, // frontend sends string like "Admin"
-      tags: rest.tags || null,
+      assigned_to: rest.assigned_to || null,
+      tags: rest.tags || [],
       position: rest.position || null,
       email: rest.email || null,
       website: rest.website || null,
@@ -85,31 +76,28 @@ router.post("/", async (req, res) => {
       country: rest.country || null,
       zipcode: rest.zipcode || null,
       default_language: rest.default_language || "System Default",
-      is_public: rest.is_public ? 1 : 0,
-      contacted_today: rest.contacted_today ? 1 : 0,
-      currency: rest.currency || "USD",
-      created_at: new Date(),
-      updated_at: new Date()
-    };
+      is_public: rest.is_public || false,
+      contacted_today: rest.contacted_today || false,
+      currency: rest.currency || "USD"
+    });
 
-    const [result] = await db.query("INSERT INTO leads SET ?", data);
-    res.status(201).json({ message: "Lead created", id: result.insertId });
+    res.status(201).json({ message: "Lead created", id: lead._id });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
 });
-
 
 /* =========================
    UPDATE LEAD
 ========================= */
 router.put("/:id", async (req, res) => {
   try {
-    const fields = {};
+    const updates = {};
+
     if (req.body.name) {
       const { first_name, last_name } = splitName(req.body.name);
-      fields.first_name = first_name;
-      fields.last_name = last_name;
+      updates.first_name = first_name;
+      updates.last_name = last_name;
     }
 
     const allowed = [
@@ -119,19 +107,19 @@ router.put("/:id", async (req, res) => {
     ];
 
     allowed.forEach(f => {
-      if (req.body[f] !== undefined) {
-        fields[f] = (f === "is_public" || f === "contacted_today") 
-          ? (req.body[f] ? 1 : 0) 
-          : req.body[f];
-      }
+      if (req.body[f] !== undefined) updates[f] = req.body[f];
     });
 
-    if (!Object.keys(fields).length) return res.status(400).json({ message: "No fields to update" });
+    if (!Object.keys(updates).length)
+      return res.status(400).json({ message: "No fields to update" });
 
-    fields.updated_at = new Date();
+    updates.updatedAt = new Date();
 
-    await db.query("UPDATE leads SET ? WHERE id=?", [fields, req.params.id]);
+    const lead = await Lead.findByIdAndUpdate(req.params.id, updates, { new: true });
+    if (!lead) return res.status(404).json({ message: "Lead not found" });
+
     res.json({ message: "Lead updated" });
+
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -142,9 +130,9 @@ router.put("/:id", async (req, res) => {
 ========================= */
 router.delete("/:id", async (req, res) => {
   try {
-    await db.query("UPDATE leads SET deleted_at=NOW() WHERE id=?", [req.params.id]);
-    await db.query("delete from leads where id=?",[req.params.id]);
-    await db.query("alter table leads auto_increment=1")
+    const lead = await Lead.findByIdAndUpdate(req.params.id, { deleted_at: new Date() }, { new: true });
+    if (!lead) return res.status(404).json({ message: "Lead not found" });
+
     res.json({ message: "Lead deleted" });
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -156,43 +144,36 @@ router.delete("/:id", async (req, res) => {
 ========================= */
 router.post("/:id/convert", async (req, res) => {
   try {
-    const leadId = req.params.id;
+    const lead = await Lead.findById(req.params.id);
+    if (!lead || lead.deleted_at) return res.status(404).json({ message: "Lead not found" });
 
-    // Fetch the lead
-    const [leadRows] = await db.query("SELECT * FROM leads WHERE id=?", [leadId]);
-    if (!leadRows.length) return res.status(404).json({ message: "Lead not found" });
+    // Create a customer document (assumes you have a Customer model)
+    const customerData = {
+      first_name: lead.first_name,
+      last_name: lead.last_name,
+      position: lead.position,
+      email: lead.email,
+      company: lead.company,
+      phone: lead.phone,
+      website: lead.website,
+      address: lead.address,
+      city: lead.city,
+      state: lead.state,
+      country: lead.country,
+      zipcode: lead.zipcode,
+      lead_id: lead._id
+    };
 
-    const lead = leadRows[0];
+    const customer = await Customer.create(customerData);
 
-    // Insert into contact table
-    const [customerResult] = await db.query(
-      `INSERT INTO contact
-        (first_name, last_name, position, email, company, phone, website, address, city, state, country, zipcode, lead_id)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      [
-        lead.first_name,
-        lead.last_name,
-        lead.position,
-        lead.email,
-        lead.company,
-        lead.phone,
-        lead.website,
-        lead.address,
-        lead.city,
-        lead.state,
-        lead.country,
-        lead.zipcode,
-        leadId
-      ]
-    );
+    lead.converted_to_customer = true;
+    await lead.save();
 
-    // Mark lead as converted
-    await db.query("UPDATE leads SET converted_to_customer=1 WHERE id=?", [leadId]);
-    
+    res.json({ message: "Lead converted to customer", customer_id: customer._id });
+
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
 });
-
 
 module.exports = router;

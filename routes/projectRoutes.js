@@ -1,12 +1,13 @@
 const express = require("express");
 const router = express.Router();
-const db = require("../config/db");
+const Project = require("../models/Project");
+const User = require("../models/User");       // your users collection
+const Customer = require("../models/Customer"); // your customers collection
 
 /* ===============================
    CREATE PROJECT + MEMBERS
 ================================ */
 router.post("/", async (req, res) => {
-  const connection = await db.getConnection();
   try {
     const {
       name,
@@ -22,52 +23,28 @@ router.post("/", async (req, res) => {
       members // array of user IDs
     } = req.body;
 
-    await connection.beginTransaction();
-    const safeCustomerId =
-  customer_id && !isNaN(customer_id) ? customer_id : null;
+    const project = await Project.create({
+      name,
+      customer_id: customer_id || null,
+      bill_type: bill_type || "Project hours",
+      status: status || "Not started",
+      rate_per_hour: rate_per_hour || null,
+      estimated_hour: estimated_hour || null,
+      start_date: start_date || null,
+      end_date: end_date || null,
+      tags: tags || [],
+      description: description || "",
+      members: Array.isArray(members) ? members : []
+    });
 
-
-    const [projectResult] = await connection.query(
-      `INSERT INTO projects
-      (name, customer_id, bill_type, status, rate_per_hour, estimated_hour, start_date, end_date, tags, description)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      [
-        name,
-        safeCustomerId,
-        bill_type || "Project hours",
-        status || "Not started",
-        rate_per_hour || null,
-        estimated_hour || null,
-        start_date || null,
-        end_date || null,
-        tags || null,
-        description || null
-      ]
-    );
-
-    const projectId = projectResult.insertId;
-
-    if (Array.isArray(members) && members.length > 0) {
-      const values = members.map(userId => [projectId, userId]);
-      await connection.query(
-        `INSERT INTO project_members (project_id, user_id) VALUES ?`,
-        [values]
-      );
-    }
-
-    await connection.commit();
     res.status(201).json({
       success: true,
       message: "Project created successfully",
-      project_id: projectId
+      project_id: project._id
     });
-
   } catch (err) {
-    await connection.rollback();
     console.error(err);
     res.status(500).json({ message: "Server error" });
-  } finally {
-    connection.release();
   }
 });
 
@@ -76,46 +53,39 @@ router.post("/", async (req, res) => {
 ================================ */
 router.get("/", async (req, res) => {
   try {
-    const [rows] = await db.query(`
-      SELECT 
-        p.*,
-        CONCAT(c.first_name, ' ', c.last_name) AS customer_name
-      FROM projects p
-      LEFT JOIN contact c ON c.id = p.customer_id
-      ORDER BY p.id DESC
-    `);
+    const projects = await Project.find()
+      .populate("customer_id", "first_name last_name")
+      .sort({ createdAt: -1 });
 
-    res.json(rows);
+    const formatted = projects.map(p => ({
+      ...p.toObject(),
+      customer_name: p.customer_id ? `${p.customer_id.first_name} ${p.customer_id.last_name}` : null
+    }));
+
+    res.json(formatted);
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    console.error(err);
+    res.status(500).json({ message: "Server error" });
   }
 });
-
 
 /* ===============================
    GET SINGLE PROJECT
 ================================ */
 router.get("/:id", async (req, res) => {
   try {
-    const [rows] = await db.query(`
-      SELECT 
-        p.*,
-        CONCAT(c.first_name,' ',c.last_name) AS customer_name,
-        GROUP_CONCAT(u.id) AS member_ids,
-        GROUP_CONCAT(u.name) AS member_names
-      FROM projects p
-      LEFT JOIN contacts c ON c.id = p.customer_id
-      LEFT JOIN project_members pm ON pm.project_id = p.id
-      LEFT JOIN users u ON u.id = pm.user_id
-      WHERE p.id=?
-      GROUP BY p.id
-    `, [req.params.id]);
+    const project = await Project.findById(req.params.id)
+      .populate("customer_id", "first_name last_name")
+      .populate("members", "name");
 
-    if (!rows.length) {
-      return res.status(404).json({ message: "Project not found" });
-    }
+    if (!project) return res.status(404).json({ message: "Project not found" });
 
-    res.json(rows[0]);
+    res.json({
+      ...project.toObject(),
+      customer_name: project.customer_id ? `${project.customer_id.first_name} ${project.customer_id.last_name}` : null,
+      member_ids: project.members.map(m => m._id),
+      member_names: project.members.map(m => m.name)
+    });
   } catch (err) {
     console.error(err);
     res.status(500).json({ message: "Server error" });
@@ -126,7 +96,6 @@ router.get("/:id", async (req, res) => {
    UPDATE PROJECT + MEMBERS
 ================================ */
 router.put("/:id", async (req, res) => {
-  const connection = await db.getConnection();
   try {
     const {
       name,
@@ -139,62 +108,30 @@ router.put("/:id", async (req, res) => {
       end_date,
       tags,
       description,
-      members // array of user IDs
+      members
     } = req.body;
 
-    await connection.beginTransaction();
+    const project = await Project.findById(req.params.id);
+    if (!project) return res.status(404).json({ message: "Project not found" });
 
-    await connection.query(
-      `UPDATE projects SET
-        name=?,
-        customer_id=?,
-        bill_type=?,
-        status=?,
-        rate_per_hour=?,
-        estimated_hour=?,
-        start_date=?,
-        end_date=?,
-        tags=?,
-        description=?
-      WHERE id=?`,
-      [
-        name,
-        customer_id || null,
-        bill_type,
-        status,
-        rate_per_hour,
-        estimated_hour,
-        start_date,
-        end_date,
-        tags,
-        description,
-        req.params.id
-      ]
-    );
+    project.name = name ?? project.name;
+    project.customer_id = customer_id ?? project.customer_id;
+    project.bill_type = bill_type ?? project.bill_type;
+    project.status = status ?? project.status;
+    project.rate_per_hour = rate_per_hour ?? project.rate_per_hour;
+    project.estimated_hour = estimated_hour ?? project.estimated_hour;
+    project.start_date = start_date ?? project.start_date;
+    project.end_date = end_date ?? project.end_date;
+    project.tags = tags ?? project.tags;
+    project.description = description ?? project.description;
+    if (Array.isArray(members)) project.members = members;
 
-    // reset members
-    await connection.query(
-      `DELETE FROM project_members WHERE project_id=?`,
-      [req.params.id]
-    );
+    await project.save();
 
-    if (Array.isArray(members) && members.length > 0) {
-      const values = members.map(userId => [req.params.id, userId]);
-      await connection.query(
-        `INSERT INTO project_members (project_id, user_id) VALUES ?`,
-        [values]
-      );
-    }
-
-    await connection.commit();
     res.json({ success: true, message: "Project updated successfully" });
-
   } catch (err) {
-    await connection.rollback();
     console.error(err);
     res.status(500).json({ message: "Server error" });
-  } finally {
-    connection.release();
   }
 });
 
@@ -203,8 +140,9 @@ router.put("/:id", async (req, res) => {
 ================================ */
 router.delete("/:id", async (req, res) => {
   try {
-    await db.query(`DELETE FROM projects WHERE id=?`, [req.params.id]);
-    // await db.query('alter table projects auto_increment=1');
+    const project = await Project.findByIdAndDelete(req.params.id);
+    if (!project) return res.status(404).json({ message: "Project not found" });
+
     res.json({ success: true, message: "Project deleted successfully" });
   } catch (err) {
     console.error(err);
